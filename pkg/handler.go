@@ -101,14 +101,20 @@ func FilePerDaysHandler(folder string, maxFilesInFolder int) io.Writer {
 	return w
 }
 
-// defaultPrintHandler prints the message to the console
-func defaultPrintHandler() io.Writer {
+// SilenceHandler does nothing that is ignores any messages and returns the length of the message without error
+func SilenceHandler() io.Writer {
+	return &writer{
+		h: func(msg []byte) (int, error) {
+			return len(msg), nil
+		},
+	}
+}
+
+// PrintHandler prints the message to the console
+func PrintHandler() io.Writer {
 	w := &writer{
 		h: func(msg []byte) (int, error) {
-
-			msg = bytes.TrimSpace(msg)
-			println(msg)
-
+			println(string(bytes.TrimSpace(msg)))
 			return len(msg), nil
 		},
 	}
@@ -136,7 +142,7 @@ const defaultFileExtension = "log"
 // writer is a thread-safe writer
 type writer struct {
 	m sync.Mutex
-	h handler
+	h func(msg []byte) (n int, err error)
 }
 
 // Write writes the message to the handler
@@ -145,6 +151,3 @@ func (w *writer) Write(p []byte) (n int, err error) {
 	defer w.m.Unlock()
 	return w.h(p)
 }
-
-// handler is a function that handles messages
-type handler func(msg []byte) (n int, err error)
