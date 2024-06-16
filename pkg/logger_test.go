@@ -63,34 +63,29 @@ func TestLogger_Hook(t *testing.T) {
 		t.Fatalf("Hook method added an unexpected number of hooks: %d", n)
 	}
 
-	hookID := l.Hook(logLevelWarning, b)
-
+	hookID := l.Hook(b, logLevelWarning)
 	if n := len(l.hooks); n != 1 {
 		t.Fatalf("Hook method added an unexpected number of hooks: %d", n)
 	}
-
 	if l.hooks[0].ID != hookID {
 		t.Fatalf("Hook method added a hook with an unexpected ID: %v", l.hooks[0].ID)
 	}
-
-	if l.hooks[0].MinimumLogLevel != logLevelWarning {
-		t.Fatalf("Hook method added a hook with an unexpected minimum log level: %v", l.hooks[0].MinimumLogLevel)
+	if l.hooks[0].Level != logLevelWarning {
+		t.Fatalf("Hook method added a hook with an unexpected minimum log level: %v", l.hooks[0].Level)
 	}
-
-	n, err := l.WriteLog(logLevelSevere, []byte(m))
+	n, err := l.WriteLog(logLevelWarning, []byte(m))
 	if err != nil {
 		t.Fatalf("Write method returned an error: %v", err)
 	}
 	if n != len(m) {
 		t.Errorf("Write method returned an unexpected length: %d", n)
 	}
-
 	if s := b.String(); s != m {
 		t.Errorf("Write method wrote an unexpected message: %v", s)
 	}
 
 	b.Reset()
-
+	m = uuid.NewV4().String()
 	n, err = l.WriteLog(logLevelDebug, []byte(m))
 	if err != nil {
 		t.Fatalf("Write method returned an error: %v", err)
@@ -98,8 +93,20 @@ func TestLogger_Hook(t *testing.T) {
 	if n != 0 {
 		t.Errorf("Write method returned an unexpected length: %d", n)
 	}
+	if s := b.String(); strings.Contains(s, m) {
+		t.Errorf("Write method wrote an unexpected message: %v", s)
+	}
 
-	if s := b.String(); len(s) != 0 {
+	b.Reset()
+	m = uuid.NewV4().String()
+	n, err = l.WriteLog(logLevelSevere, []byte(m))
+	if err != nil {
+		t.Fatalf("Write method returned an error: %v", err)
+	}
+	if n == 0 {
+		t.Errorf("Write method returned an unexpected length: %d", n)
+	}
+	if s := b.String(); strings.Contains(s, m) {
 		t.Errorf("Write method wrote an unexpected message: %v", s)
 	}
 }
@@ -109,7 +116,7 @@ func TestLogger_Unhook(t *testing.T) {
 	b := bytes.NewBufferString("")
 	l, _ := NewLogger(logLevelInfo, SilenceHandler())
 
-	hookID := l.Hook(logLevelWarning, b)
+	hookID := l.Hook(b, logLevelWarning)
 
 	if n := len(l.hooks); n != 1 {
 		t.Fatalf("Hook method added an unexpected number of hooks: %d", n)
@@ -120,15 +127,13 @@ func TestLogger_Unhook(t *testing.T) {
 	if n := len(l.hooks); n != 0 {
 		t.Fatalf("Unhook method removed an unexpected number of hooks: %d", n)
 	}
-
-	n, err := l.WriteLog(logLevelSevere, []byte(m))
+	n, err := l.WriteLog(logLevelWarning, []byte(m))
 	if err != nil {
 		t.Fatalf("Write method returned an error: %v", err)
 	}
 	if n != len(m) {
 		t.Errorf("Write method returned an unexpected length: %d", n)
 	}
-
 	if s := b.String(); len(s) != 0 {
 		t.Errorf("Write method wrote an unexpected message: %v", s)
 	}

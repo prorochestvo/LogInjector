@@ -26,7 +26,7 @@ func NewLogger(minLogLevel LogLevel, handlers ...io.Writer) (*Logger, error) {
 type Logger struct {
 	minimumLogLevel LogLevel
 	handlers        []io.Writer
-	hooks           []hook
+	hooks           []*hook
 	m               sync.RWMutex
 }
 
@@ -39,19 +39,21 @@ func (l *Logger) SetMinLevel(level LogLevel) {
 }
 
 // Hook adds a hook to the logger
-func (l *Logger) Hook(logLevel LogLevel, writers ...io.Writer) HookID {
+func (l *Logger) Hook(writer io.Writer, logLevels ...LogLevel) HookID {
 	l.m.Lock()
 	defer l.m.Unlock()
 
-	h := hook{
-		ID:              HookID(uuid.NewV4().String()),
-		MinimumLogLevel: logLevel,
-		Writers:         writers,
+	hID := HookID(uuid.NewV4().String())
+
+	for _, logLevel := range logLevels {
+		l.hooks = append(l.hooks, &hook{
+			ID:     hID,
+			Level:  logLevel,
+			Writer: writer,
+		})
 	}
 
-	l.hooks = append(l.hooks, h)
-
-	return h.ID
+	return hID
 }
 
 // Unhook removes a hook from the logger
@@ -96,19 +98,16 @@ func (l *Logger) WriteLog(level LogLevel, message []byte) (int, error) {
 	defer l.m.RUnlock()
 
 	for _, h := range l.hooks {
-		if level < h.MinimumLogLevel {
+		if level != h.Level {
 			continue
 		}
-
-		for _, w := range h.Writers {
-			wg.Add(1)
-			go func(w io.Writer) {
-				defer wg.Done()
-				if _, e := w.Write(message); e != nil {
-					errs = append(errs, e)
-				}
-			}(w)
-		}
+		wg.Add(1)
+		go func(w io.Writer) {
+			defer wg.Done()
+			if _, e := w.Write(message); e != nil {
+				errs = append(errs, e)
+			}
+		}(h.Writer)
 	}
 
 	if level < l.minimumLogLevel {
@@ -143,7 +142,7 @@ type HookID string
 
 // hook is a log hook
 type hook struct {
-	ID              HookID
-	MinimumLogLevel LogLevel
-	Writers         []io.Writer
+	ID     HookID
+	Level  LogLevel
+	Writer io.Writer
 }

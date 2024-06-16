@@ -152,6 +152,11 @@ func TestCyclicOverwritingFilesHandler(t *testing.T) {
 	}
 }
 
+func TestReinitCyclicOverwritingFilesHandler(t *testing.T) {
+	// TODO: Implement reinit last file state after restart\recreate handler
+	t.Skipf("test not implemented")
+}
+
 func TestCyclicOverwritingFilesHandlerForRaceCondition(t *testing.T) {
 	tmpFolder := path.Join(os.TempDir(), fmt.Sprintf("log-%d", rand.Uint64()))
 	err := os.MkdirAll(tmpFolder, 0777)
