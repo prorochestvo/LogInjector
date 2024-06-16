@@ -1,6 +1,7 @@
 package loginjector
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"github.com/twinj/uuid"
@@ -25,7 +26,7 @@ func TestCyclicOverwritingFilesHandler(t *testing.T) {
 
 	h := CyclicOverwritingFilesHandler(tmpFolder, "err", 7, 3)
 
-	err = h(strings.Repeat("1", 2))
+	_, err = h.Write(bytes.Repeat([]byte("1"), 2))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +41,7 @@ func TestCyclicOverwritingFilesHandler(t *testing.T) {
 		t.Fatalf("incorrect file context, got: %s, expected: %s", f, "11\n")
 	}
 
-	err = h(strings.Repeat("2", 2))
+	_, err = h.Write(bytes.Repeat([]byte("2"), 2))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +56,7 @@ func TestCyclicOverwritingFilesHandler(t *testing.T) {
 		t.Fatalf("incorrect file context, got: %s, expected: %s", f, "11\n22\n")
 	}
 
-	err = h(strings.Repeat("3", 2))
+	_, err = h.Write(bytes.Repeat([]byte("3"), 2))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +71,7 @@ func TestCyclicOverwritingFilesHandler(t *testing.T) {
 		t.Fatalf("incorrect file context, got: %s, expected: %s", f, "11\n22\n33\n")
 	}
 
-	err = h("4")
+	_, err = h.Write([]byte("4"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +89,7 @@ func TestCyclicOverwritingFilesHandler(t *testing.T) {
 		t.Fatalf("incorrect file context, got: %s, expected: %s", f, "4\n")
 	}
 
-	err = h(strings.Repeat("5", 5))
+	_, err = h.Write(bytes.Repeat([]byte("5"), 5))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,11 +107,11 @@ func TestCyclicOverwritingFilesHandler(t *testing.T) {
 		t.Fatalf("incorrect file context, got: %s, expected: %s", f, "4\n55555\n")
 	}
 
-	err = h(strings.Repeat("6", 10))
+	_, err = h.Write(bytes.Repeat([]byte("6"), 10))
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = h(strings.Repeat("7", 10))
+	_, err = h.Write(bytes.Repeat([]byte("7"), 10))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +152,7 @@ func TestCyclicOverwritingFilesHandlerForRaceCondition(t *testing.T) {
 	wg := sync.WaitGroup{}
 	for _, m := range messages {
 		go func(txt string) {
-			if e := h(txt); e != nil {
+			if _, e := h.Write([]byte(txt)); e != nil {
 				err = errors.Join(err, e)
 			}
 			wg.Done()
