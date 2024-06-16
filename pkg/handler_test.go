@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/prorochestvo/LogInjector/internal/stacktrace"
 	"github.com/twinj/uuid"
 	"math/rand"
 	"os"
@@ -13,6 +14,24 @@ import (
 	"sync"
 	"testing"
 )
+
+func TestTelegramHandler(t *testing.T) {
+	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
+	chatID := os.Getenv("TELEGRAM_BOT_CHAT_ID")
+
+	if len(botToken) == 0 || len(chatID) == 0 {
+		t.Skipf("TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_CHAT_ID not set")
+	}
+
+	m, s := stacktrace.ExtractMethodTrace()
+	s = fmt.Sprintf("%s\n\nSTACKTRACE:\n%s", m, s)
+
+	h := TelegramHandler(botToken, chatID, "test.log", "LogInjector", "<b>demo</b> of telegram handler")
+	_, err := h.Write([]byte(s))
+	if err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestCyclicOverwritingFilesHandler(t *testing.T) {
 	tmpFolder := path.Join(os.TempDir(), fmt.Sprintf("log-%d", rand.Uint64()))

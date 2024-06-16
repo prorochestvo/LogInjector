@@ -2,16 +2,86 @@ package loginjector
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
+	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
+
+func TelegramHandler(botToken, chatID, fileName string, labels ...string) io.Writer {
+	const telegramAPI = "https://api.telegram.org/bot"
+	url := fmt.Sprintf("%s%s/sendDocument", telegramAPI, botToken)
+	w := &writer{
+		h: func(msg []byte) (int, error) {
+			payload := &bytes.Buffer{}
+			parts := multipart.NewWriter(payload)
+
+			if filePart, err := parts.CreateFormFile("document", fileName); err != nil {
+				return 0, fmt.Errorf("could not create payload form file, details: %s", err)
+			} else if _, err = filePart.Write(msg); err != nil {
+				return 0, fmt.Errorf("could not write file part to payload, details: %s", err)
+			}
+
+			if err := parts.WriteField("chat_id", chatID); err != nil {
+				return 0, fmt.Errorf("could not write chat_id field to payload: %s", err)
+			}
+
+			caption := strings.Join(labels, "\n")
+			caption = fmt.Sprintf("%s %s", time.Now().UTC().Format("2006-01-02 15:04:05"), caption)
+			caption = strings.TrimSpace(caption)
+			if err := parts.WriteField("caption", caption); err != nil {
+				return 0, fmt.Errorf("could not write caption field to payload: %s", err)
+			}
+
+			if err := parts.WriteField("parse_mode", "HTML"); err != nil {
+				return 0, fmt.Errorf("could not write parse_mode field to payload: %s", err)
+			}
+
+			contentType := parts.FormDataContentType()
+
+			if err := parts.Close(); err != nil {
+				return 0, fmt.Errorf("could not close payload: %s", err)
+			}
+
+			request, err := http.NewRequest("POST", url, payload)
+			if err != nil {
+				return 0, fmt.Errorf("could not create HTTP request: %v", err)
+			}
+			request.Header.Set("Content-Type", contentType)
+
+			r, err := (&http.Client{Timeout: time.Second * 20}).Do(request)
+			if err != nil {
+				return 0, fmt.Errorf("could not send HTTP request: %v", err)
+			}
+			defer CloseOrLog(r.Body)
+
+			if r.StatusCode != http.StatusOK {
+				return 0, fmt.Errorf("could not to deliver message, status code: %v", r.StatusCode)
+			}
+
+			var response struct {
+				Ok bool `json:"ok"`
+			}
+			rawResponse := bytes.NewBufferString("")
+			err = json.NewDecoder(io.TeeReader(r.Body, rawResponse)).Decode(&response)
+			if err != nil || !response.Ok {
+				return 0, fmt.Errorf("could not decode response: %v\n%s", err, rawResponse.String())
+			}
+
+			return len(msg), nil
+		},
+	}
+	return w
+}
 
 // CyclicOverwritingFilesHandler creates a new file when the current file exceeds maxFileCapacity and removes older files if the number of files exceeds maxFilesInFolder
 func CyclicOverwritingFilesHandler(folder, fileNamePrefix string, maxFileCapacity uint32, maxFilesInFolder int) io.Writer {
