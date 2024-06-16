@@ -1,6 +1,7 @@
 package stacktrace
 
 import (
+	"path"
 	"regexp"
 	"runtime/debug"
 	"strings"
@@ -17,10 +18,10 @@ func StackTrace() string {
 	return result
 }
 
-func ExtractMethodTrace(substrPoint ...string) (string, string) {
+func ExtractMethodTrace(subpackages ...string) (string, string) {
 	pointer := currentPackageFile
-	if substrPoint != nil && len(substrPoint) > 0 {
-		pointer = strings.Join(substrPoint, "/")
+	if subpackages != nil && len(subpackages) > 0 {
+		pointer = path.Join(subpackages...)
 	}
 
 	stacktrace := StackTrace()

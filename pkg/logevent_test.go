@@ -16,7 +16,7 @@ func TestCreateLogEvent(t *testing.T) {
 
 	UseAsDefault(l)
 
-	event := CreateLogEvent(logLevelInfo, "new-event")
+	event := CreateLogEvent(logLevelInfo, "pkg", "logevent.go")
 	if event == nil {
 		t.Fatal("event is nil")
 	}
@@ -41,7 +41,7 @@ func TestCreateLogEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if s := b.String(); !strings.Contains(s, m) || !strings.Contains(s, "new-event") {
+	if s := b.String(); !strings.Contains(s, m) {
 		t.Errorf("unexpected message: %v", s)
 	}
 }
@@ -57,9 +57,12 @@ func TestCreateAndCloseLogEvent(t *testing.T) {
 
 	m := uuid.NewV4().String()
 
-	CreateAndCloseLogEvent(logLevelInfo, "new-event", m)
+	err = CreateAndCloseLogEvent(logLevelInfo, m, "pkg", "logevent.go")
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	if s := b.String(); !strings.Contains(s, m) || !strings.Contains(s, "new-event") {
+	if s := b.String(); !strings.Contains(s, m) {
 		t.Errorf("unexpected message: %v", s)
 	}
 }
