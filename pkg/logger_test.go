@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -265,16 +266,60 @@ func TestLogger_Write(t *testing.T) {
 	}
 }
 
-func TestLogger_Print(t *testing.T) {
-	m1 := uuid.NewV4().String()
-	m2 := uuid.NewV4().String()
-	m3 := uuid.NewV4().String()
+func TestLogger_PrintAndFatal(t *testing.T) {
+	m1 := "M1_" + uuid.NewV4().String()
+	m2 := "M2_" + uuid.NewV4().String()
+	m3 := "M3_" + uuid.NewV4().String()
+	m4 := "M4_" + uuid.NewV4().String()
+	m5 := "M5_" + uuid.NewV4().String()
+	m6 := "M6_" + uuid.NewV4().String()
+	m7 := "M7_" + uuid.NewV4().String()
 	b := bytes.NewBufferString("")
 	l, _ := NewLogger(logLevelInfo, b)
 
-	l.Printf(logLevelDebug, "%s", m1)
-	l.Printf(logLevelInfo, "%s", m2)
-	l.Printf(logLevelSevere, "%s", m3)
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func(l *Logger) {
+		defer wg.Done()
+		l.Printf(logLevelDebug, "%s", m1)
+	}(l)
+	wg.Add(1)
+	go func(l *Logger) {
+		defer wg.Done()
+		l.Print(logLevelInfo, m2, uuid.NewV4().String(), uuid.NewV4().String())
+	}(l)
+	wg.Add(1)
+	go func(l *Logger) {
+		defer wg.Done()
+		l.Printf(logLevelSevere, "%s", m3)
+	}(l)
+	wg.Wait()
+	wg.Add(1)
+	go func(l *Logger) {
+		defer wg.Done()
+		defer func() {
+			_ = recover()
+		}()
+		l.Fatalf(logLevelDebug, "%s", m4)
+	}(l)
+	wg.Add(1)
+	go func(l *Logger) {
+		defer wg.Done()
+		defer func() {
+			_ = recover()
+		}()
+		l.Fatal(logLevelInfo, m5, m6, uuid.NewV4().String())
+	}(l)
+	wg.Wait()
+	wg.Add(1)
+	go func(l *Logger) {
+		defer wg.Done()
+		defer func() {
+			_ = recover()
+		}()
+		l.Fatalf(logLevelSevere, "%s", m7)
+	}(l)
+	wg.Wait()
 
 	if s := b.String(); len(s) == 0 {
 		t.Errorf("Print method wrote an unexpected message: %v", s)
@@ -284,5 +329,41 @@ func TestLogger_Print(t *testing.T) {
 		t.Errorf("Print method wrote an unexpected message: %v", s)
 	} else if !strings.Contains(s, m3) {
 		t.Errorf("Print method wrote an unexpected message: %v", s)
+	} else if strings.Contains(s, m4) {
+		t.Errorf("Print method wrote an unexpected message: %v", s)
+	} else if !strings.Contains(s, m5) {
+		t.Errorf("Print method wrote an unexpected message: %v", s)
+	} else if !strings.Contains(s, m6) {
+		t.Errorf("Print method wrote an unexpected message: %v", s)
+	} else if !strings.Contains(s, m7) {
+		t.Errorf("Print method wrote an unexpected message: %v", s)
+	}
+}
+
+func TestLogger_WriterAs(t *testing.T) {
+	b := bytes.NewBufferString("")
+	l, _ := NewLogger(logLevelInfo, b)
+
+	w := l.WriterAs(logLevelWarning)
+	m := uuid.NewV4().String()
+	_, _ = w.Write([]byte(m))
+	if s := b.String(); !strings.Contains(s, m) {
+		t.Errorf("Write method wrote an unexpected message: %v", s)
+	}
+	b.Reset()
+
+	w = l.WriterAs(logLevelDebug)
+	m = uuid.NewV4().String()
+	_, _ = w.Write([]byte(m))
+	if s := b.String(); strings.Contains(s, m) {
+		t.Errorf("Write method wrote an unexpected message: %v", s)
+	}
+	b.Reset()
+
+	w = l.WriterAs(logLevelSevere)
+	m = uuid.NewV4().String()
+	_, _ = w.Write([]byte(m))
+	if s := b.String(); !strings.Contains(s, m) {
+		t.Errorf("Write method wrote an unexpected message: %v", s)
 	}
 }

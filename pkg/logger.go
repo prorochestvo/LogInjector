@@ -142,7 +142,8 @@ func (l *Logger) WriteLog(level LogLevel, message []byte) (int, error) {
 
 // Printf writes a formatted log message
 func (l *Logger) Printf(level LogLevel, format string, args ...any) {
-	_, err := l.WriteLog(level, []byte(fmt.Sprintf(format, args...)+"\n"))
+	s := fmt.Sprintf(format, args...)
+	_, err := l.WriteLog(level, []byte(s+"\n"))
 	if err != nil {
 		println(err.Error(), stacktrace.StackTrace())
 	}
@@ -150,15 +151,46 @@ func (l *Logger) Printf(level LogLevel, format string, args ...any) {
 
 // Print writes a log message
 func (l *Logger) Print(level LogLevel, args ...any) {
-	_, err := l.WriteLog(level, []byte(fmt.Sprint(args...)+"\n"))
+	s := fmt.Sprint(args...)
+	_, err := l.WriteLog(level, []byte(s+"\n"))
 	if err != nil {
 		println(err.Error(), stacktrace.StackTrace())
 	}
 }
 
+// Fatalf writes a formatted log message and exits the program
+func (l *Logger) Fatalf(level LogLevel, format string, args ...any) {
+	s := fmt.Sprintf(format, args...)
+	_, err := l.WriteLog(level, []byte(s+"\n"))
+	if err != nil {
+		println(err.Error(), stacktrace.StackTrace())
+	}
+	panic(s)
+}
+
+// Fatal writes a log message and exits the program
+func (l *Logger) Fatal(level LogLevel, args ...any) {
+	s := fmt.Sprint(args...)
+	_, err := l.WriteLog(level, []byte(s+"\n"))
+	if err != nil {
+		println(err.Error(), stacktrace.StackTrace())
+	}
+	panic(s)
+}
+
 // Write writes a log message with the minimum log level
 func (l *Logger) Write(message []byte) (int, error) {
 	return l.WriteLog(l.minimumLogLevel, message)
+}
+
+// WriterAs returns a writer that writes to the logger as the given log level
+func (l *Logger) WriterAs(level LogLevel) io.Writer {
+	w := &writer{
+		h: func(msg []byte) (int, error) {
+			return l.WriteLog(level, msg)
+		},
+	}
+	return w
 }
 
 // LogLevel is a log level
