@@ -116,9 +116,9 @@ func TestLogger_Unhook(t *testing.T) {
 	b := bytes.NewBufferString("")
 	l, _ := NewLogger(logLevelInfo, SilenceHandler())
 
-	hookID := l.Hook(b, logLevelWarning)
+	hookID := l.Hook(b, logLevelWarning, logLevelSevere, logLevelSevere)
 
-	if n := len(l.hooks); n != 1 {
+	if n := len(l.hooks); n != 3 {
 		t.Fatalf("Hook method added an unexpected number of hooks: %d", n)
 	}
 

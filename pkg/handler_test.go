@@ -175,13 +175,13 @@ func TestCyclicOverwritingFilesHandlerForRaceCondition(t *testing.T) {
 
 	wg := sync.WaitGroup{}
 	for _, m := range messages {
+		wg.Add(1)
 		go func(txt string) {
+			defer wg.Done()
 			if _, e := h.Write([]byte(txt)); e != nil {
 				err = errors.Join(err, e)
 			}
-			wg.Done()
 		}(m)
-		wg.Add(1)
 	}
 	wg.Wait()
 	if err != nil {

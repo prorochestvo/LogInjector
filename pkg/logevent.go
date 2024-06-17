@@ -2,35 +2,41 @@ package loginjector
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"github.com/prorochestvo/LogInjector/internal/stacktrace"
 	"io"
-	"strings"
 	"sync"
 )
 
 // CreateLogEvent creates a new record with the specified log level and default logger.
 // The message is written to the logger when the record is closed.
 // The record is thread-safe.
-func CreateLogEvent(level LogLevel, message ...string) LogEvent {
-	return newRecord(level, defaultLogger, message...)
+func CreateLogEvent(level LogLevel, subpackages ...string) LogEvent {
+	return newRecord(level, defaultLogger, subpackages...)
 }
 
 // CreateAndCloseLogEvent creates a new record with the specified log level and default logger.
 // The message is written immediately to the logger.
-func CreateAndCloseLogEvent(level LogLevel, message ...string) {
-	r := newRecord(level, defaultLogger, message...)
-	defer CloseOrLog(r)
+func CreateAndCloseLogEvent(level LogLevel, message string, subpackages ...string) (err error) {
+	r := newRecord(level, defaultLogger, subpackages...)
+	defer func(r LogEvent) {
+		if e := r.Close(); e != nil {
+			err = errors.Join(err, e)
+		}
+	}(r)
+	_, err = r.Write([]byte(message))
+	return
 }
 
 // newRecord creates a new record with the specified log level and logger.
 // The message is written to the logger when the record is closed.
 // The record is thread-safe.
-func newRecord(level LogLevel, logger *Logger, message ...string) LogEvent {
-	method, trace := stacktrace.ExtractMethodTrace("pkg/logevent.go")
+func newRecord(level LogLevel, logger *Logger, subpackages ...string) LogEvent {
+	method, trace := stacktrace.ExtractMethodTrace(subpackages...)
 	r := &record{
 		level:       level,
-		buffer:      bytes.NewBufferString(strings.Join(message, "\n")),
+		buffer:      bytes.NewBufferString(""),
 		logger:      logger,
 		methodTrace: method,
 		stackTrace:  trace,
