@@ -39,13 +39,19 @@ func (l *Logger) SetMinLevel(level LogLevel) {
 }
 
 // Hook adds a hook to the logger
-func (l *Logger) Hook(writer io.Writer, logLevels ...LogLevel) HookID {
+func (l *Logger) Hook(writer io.Writer, level LogLevel, additional ...LogLevel) HookID {
 	l.m.Lock()
 	defer l.m.Unlock()
 
 	hID := HookID(uuid.NewV4().String())
 
-	for _, logLevel := range logLevels {
+	l.hooks = append(l.hooks, &hook{
+		ID:     hID,
+		Level:  level,
+		Writer: writer,
+	})
+
+	for _, logLevel := range additional {
 		l.hooks = append(l.hooks, &hook{
 			ID:     hID,
 			Level:  logLevel,
@@ -61,12 +67,15 @@ func (l *Logger) Unhook(id HookID) {
 	l.m.Lock()
 	defer l.m.Unlock()
 
-	for i, h := range l.hooks {
-		if h.ID == id {
-			l.hooks = append(l.hooks[:i], l.hooks[i+1:]...)
-			break
+	items := make([]*hook, 0, len(l.hooks)-1)
+
+	for _, h := range l.hooks {
+		if h.ID != id {
+			items = append(items, h)
 		}
 	}
+
+	l.hooks = items
 }
 
 // JoinAs joins the logger as a writer to the given outputs

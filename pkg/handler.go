@@ -26,30 +26,30 @@ func TelegramHandler(botToken, chatID, fileName string, labels ...string) io.Wri
 			parts := multipart.NewWriter(payload)
 
 			if filePart, err := parts.CreateFormFile("document", fileName); err != nil {
-				return 0, fmt.Errorf("could not create payload form file, details: %s", err)
+				return 0, fmt.Errorf("could not create request form file, details: %s", err)
 			} else if _, err = filePart.Write(msg); err != nil {
-				return 0, fmt.Errorf("could not write file part to payload, details: %s", err)
+				return 0, fmt.Errorf("could not write file part to request, details: %s", err)
 			}
 
 			if err := parts.WriteField("chat_id", chatID); err != nil {
-				return 0, fmt.Errorf("could not write chat_id field to payload: %s", err)
+				return 0, fmt.Errorf("could not write chat_id field to request: %s", err)
 			}
 
 			caption := strings.Join(labels, "\n")
 			caption = fmt.Sprintf("%s %s", time.Now().UTC().Format("2006-01-02 15:04:05"), caption)
 			caption = strings.TrimSpace(caption)
 			if err := parts.WriteField("caption", caption); err != nil {
-				return 0, fmt.Errorf("could not write caption field to payload: %s", err)
+				return 0, fmt.Errorf("could not write caption field to request: %s", err)
 			}
 
 			if err := parts.WriteField("parse_mode", "HTML"); err != nil {
-				return 0, fmt.Errorf("could not write parse_mode field to payload: %s", err)
+				return 0, fmt.Errorf("could not write parse_mode field to request: %s", err)
 			}
 
 			contentType := parts.FormDataContentType()
 
 			if err := parts.Close(); err != nil {
-				return 0, fmt.Errorf("could not close payload: %s", err)
+				return 0, fmt.Errorf("could not close request: %s", err)
 			}
 
 			request, err := http.NewRequest("POST", url, payload)
