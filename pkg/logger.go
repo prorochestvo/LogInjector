@@ -2,6 +2,8 @@ package loginjector
 
 import (
 	"errors"
+	"fmt"
+	"github.com/prorochestvo/LogInjector/internal/stacktrace"
 	"github.com/twinj/uuid"
 	"io"
 	"sync"
@@ -136,6 +138,22 @@ func (l *Logger) WriteLog(level LogLevel, message []byte) (int, error) {
 	wg.Wait()
 
 	return n, errors.Join(errs...)
+}
+
+// Printf writes a formatted log message
+func (l *Logger) Printf(level LogLevel, format string, args ...any) {
+	_, err := l.WriteLog(level, []byte(fmt.Sprintf(format, args...)+"\n"))
+	if err != nil {
+		println(err.Error(), stacktrace.StackTrace())
+	}
+}
+
+// Print writes a log message
+func (l *Logger) Print(level LogLevel, args ...any) {
+	_, err := l.WriteLog(level, []byte(fmt.Sprint(args...)+"\n"))
+	if err != nil {
+		println(err.Error(), stacktrace.StackTrace())
+	}
 }
 
 // Write writes a log message with the minimum log level

@@ -264,3 +264,25 @@ func TestLogger_Write(t *testing.T) {
 		t.Errorf("Write method wrote an unexpected message: %v", s)
 	}
 }
+
+func TestLogger_Print(t *testing.T) {
+	m1 := uuid.NewV4().String()
+	m2 := uuid.NewV4().String()
+	m3 := uuid.NewV4().String()
+	b := bytes.NewBufferString("")
+	l, _ := NewLogger(logLevelInfo, b)
+
+	l.Printf(logLevelDebug, "%s", m1)
+	l.Printf(logLevelInfo, "%s", m2)
+	l.Printf(logLevelSevere, "%s", m3)
+
+	if s := b.String(); len(s) == 0 {
+		t.Errorf("Print method wrote an unexpected message: %v", s)
+	} else if strings.Contains(s, m1) {
+		t.Errorf("Print method wrote an unexpected message: %v", s)
+	} else if !strings.Contains(s, m2) {
+		t.Errorf("Print method wrote an unexpected message: %v", s)
+	} else if !strings.Contains(s, m3) {
+		t.Errorf("Print method wrote an unexpected message: %v", s)
+	}
+}
