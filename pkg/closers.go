@@ -1,7 +1,7 @@
 package loginjector
 
 import (
-	"github.com/prorochestvo/LogInjector/internal/stacktrace"
+	"github.com/prorochestvo/loginjector/internal/stacktrace"
 	"io"
 	"log"
 )

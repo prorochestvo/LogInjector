@@ -1,4 +1,4 @@
-module github.com/prorochestvo/LogInjector
+module github.com/prorochestvo/loginjector
 
 go 1.22.2
 

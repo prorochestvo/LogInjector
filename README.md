@@ -20,7 +20,7 @@ LogInjector is a lightweight logging utility written in Go designed to provide c
 **Installation:**
 
 ```sh
-go get github.com/prorochestvo/LogInjector
+go get github.com/prorochestvo/loginjector
 ```
 
 **Usage:**
@@ -30,7 +30,7 @@ package main
 
 import (
 	"bytes"
-	"github.com/prorochestvo/LogInjector/pkg"
+	"github.com/prorochestvo/loginjector/pkg"
 )
 
 const (

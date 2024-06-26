@@ -3,8 +3,8 @@ package loginjector
 import (
 	"bytes"
 	"fmt"
-	"github.com/prorochestvo/LogInjector/internal/stacktrace"
-	"github.com/prorochestvo/LogInjector/internal/terminal"
+	"github.com/prorochestvo/loginjector/internal/stacktrace"
+	"github.com/prorochestvo/loginjector/internal/terminal"
 	"io"
 	"net/http"
 	"strings"

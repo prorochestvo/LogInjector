@@ -3,7 +3,7 @@ package loginjector
 import (
 	"errors"
 	"fmt"
-	"github.com/prorochestvo/LogInjector/internal/stacktrace"
+	"github.com/prorochestvo/loginjector/internal/stacktrace"
 	"github.com/twinj/uuid"
 	"io"
 	"sync"
