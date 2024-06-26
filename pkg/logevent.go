@@ -88,6 +88,11 @@ func (r *record) Close() error {
 	return err
 }
 
+// Flush writes the message to the logger.
+func (r *record) Flush() {
+	CloseOrLog(r)
+}
+
 // Error returns the accumulated message
 func (r *record) Error() string {
 	r.m.Lock()
@@ -98,6 +103,11 @@ func (r *record) Error() string {
 
 // StackTrace returns the stack trace of the record creation point
 func (r *record) StackTrace() string {
+	return r.stackTrace
+}
+
+// MethodTrace returns the method trace of the record creation point
+func (r *record) MethodTrace() string {
 	return r.methodTrace
 }
 
@@ -112,6 +122,7 @@ func UseAsDefault(l *Logger) {
 // LogEvent is an interface for the ability to leverage to the logger
 type LogEvent interface {
 	StackTrace() string
+	MethodTrace() string
 	io.WriteCloser
 	error
 }

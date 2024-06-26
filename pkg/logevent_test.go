@@ -32,7 +32,7 @@ func TestCreateLogEvent(t *testing.T) {
 		t.Errorf("unexpected message: %s", s)
 	}
 
-	if s := event.StackTrace(); !strings.Contains(s, "TestCreateLogEvent") {
+	if s := event.MethodTrace(); !strings.Contains(s, "TestCreateLogEvent") {
 		t.Errorf("unexpected stack trace: %s", s)
 	}
 
