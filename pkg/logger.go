@@ -3,7 +3,6 @@ package loginjector
 import (
 	"errors"
 	"fmt"
-	"github.com/prorochestvo/loginjector/internal/stacktrace"
 	"github.com/twinj/uuid"
 	"io"
 	"sync"
@@ -145,7 +144,7 @@ func (l *Logger) Printf(level LogLevel, format string, args ...any) {
 	s := fmt.Sprintf(format, args...)
 	_, err := l.WriteLog(level, []byte(s+"\n"))
 	if err != nil {
-		println(err.Error(), stacktrace.StackTrace())
+		println(err.Error(), StackTrace())
 	}
 }
 
@@ -154,7 +153,7 @@ func (l *Logger) Print(level LogLevel, args ...any) {
 	s := fmt.Sprint(args...)
 	_, err := l.WriteLog(level, []byte(s+"\n"))
 	if err != nil {
-		println(err.Error(), stacktrace.StackTrace())
+		println(err.Error(), StackTrace())
 	}
 }
 
@@ -163,7 +162,7 @@ func (l *Logger) Fatalf(level LogLevel, format string, args ...any) {
 	s := fmt.Sprintf(format, args...)
 	_, err := l.WriteLog(level, []byte(s+"\n"))
 	if err != nil {
-		println(err.Error(), stacktrace.StackTrace())
+		println(err.Error(), StackTrace())
 	}
 	panic(s)
 }
@@ -173,7 +172,7 @@ func (l *Logger) Fatal(level LogLevel, args ...any) {
 	s := fmt.Sprint(args...)
 	_, err := l.WriteLog(level, []byte(s+"\n"))
 	if err != nil {
-		println(err.Error(), stacktrace.StackTrace())
+		println(err.Error(), StackTrace())
 	}
 	panic(s)
 }

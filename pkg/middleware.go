@@ -3,7 +3,6 @@ package loginjector
 import (
 	"bytes"
 	"fmt"
-	"github.com/prorochestvo/loginjector/internal/stacktrace"
 	"github.com/prorochestvo/loginjector/internal/terminal"
 	"io"
 	"net/http"
@@ -41,7 +40,7 @@ func NewHttpPayloadHandler(logger *Logger, level LogLevel, nextFunc http.Handler
 				defer wg.Done()
 				_, err := logger.WriteLog(level, i.Bytes())
 				if err != nil {
-					println(err.Error(), stacktrace.StackTrace())
+					println(err.Error(), StackTrace())
 				}
 			}(i)
 			defer wg.Wait()

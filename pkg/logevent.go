@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/prorochestvo/loginjector/internal/stacktrace"
 	"io"
 	"sync"
 )
@@ -33,7 +32,7 @@ func CreateAndCloseLogEvent(level LogLevel, message string, subpackages ...strin
 // The message is written to the logger when the record is closed.
 // The record is thread-safe.
 func newRecord(level LogLevel, logger *Logger, subpackages ...string) LogEvent {
-	method, trace := stacktrace.ExtractMethodTrace(subpackages...)
+	method, trace := ExtractMethodTrace(subpackages...)
 	r := &record{
 		level:       level,
 		buffer:      bytes.NewBufferString(""),

@@ -1,4 +1,4 @@
-package stacktrace
+package loginjector
 
 import (
 	"path"
@@ -12,12 +12,36 @@ var (
 	rxMethodName    = regexp.MustCompile(`/(\w+[^/]+\w+)[({]+.+$`)
 )
 
+// StackTrace returns the current stack trace as a string.
 func StackTrace() string {
 	result := string(debug.Stack())
 	result = strings.TrimSpace(result)
 	return result
 }
 
+// ExtractMethodTrace extracts method trace information from a stack trace.
+//
+// This function processes the current stack trace and attempts to identify the
+// location and method name based on the provided subpackages. It returns the
+// method name along with its position and the remaining stack trace starting from
+// that position.
+//
+// Parameters:
+//   - subpackages: A variadic parameter that accepts one or more strings representing
+//     subpackage paths. These are joined together to form the path pointer to be
+//     searched within the stack trace.
+//
+// Returns:
+//   - method and position (string): The method name followed by the file position (line number)
+//     where it was found in the stack trace. Returns an empty string if no match is found.
+//   - trace (string): The remaining stack trace starting from the identified position. Returns an empty
+//     string if no match is found.
+//
+// Example usage:
+//
+//	method, trace := ExtractMethodTrace("stacktrace", "stacktrace.go")
+//	fmt.Println("method: ", method)
+//	fmt.Println("trace: ", trace)
 func ExtractMethodTrace(subpackages ...string) (string, string) {
 	pointer := currentPackageFile
 	if subpackages != nil && len(subpackages) > 0 {
@@ -54,4 +78,4 @@ func ExtractMethodTrace(subpackages ...string) (string, string) {
 	return "", ""
 }
 
-const currentPackageFile = "stacktrace/stacktrace.go"
+const currentPackageFile = "loginjector/stacktrace.go"

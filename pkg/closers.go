@@ -1,7 +1,6 @@
 package loginjector
 
 import (
-	"github.com/prorochestvo/loginjector/internal/stacktrace"
 	"io"
 	"log"
 )
@@ -10,7 +9,7 @@ import (
 func CloseOrPanic(closer io.Closer) {
 	err := closer.Close()
 	if err != nil {
-		panic(err.Error() + "\n" + stacktrace.StackTrace())
+		panic(err.Error() + "\n" + StackTrace())
 	}
 }
 

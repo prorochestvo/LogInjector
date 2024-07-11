@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/prorochestvo/loginjector/internal/stacktrace"
 	"github.com/twinj/uuid"
 	"math/rand"
 	"os"
@@ -23,7 +22,7 @@ func TestTelegramHandler(t *testing.T) {
 		t.Skipf("TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_CHAT_ID not set")
 	}
 
-	m, s := stacktrace.ExtractMethodTrace()
+	m, s := ExtractMethodTrace()
 	s = fmt.Sprintf("%s\n\nSTACKTRACE:\n%s", m, s)
 
 	h := TelegramHandler(botToken, chatID, "test.log", "LogInjector", "<b>demo</b> of telegram handler")
