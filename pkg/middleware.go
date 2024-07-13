@@ -24,11 +24,9 @@ func NewHttpPayloadHandler(logger *Logger, level LogLevel, nextFunc http.Handler
 		return nil, fmt.Errorf("logger is nil")
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		inboundedAt := time.Now().UTC()
-
 		iw, ir, i := newInterceptor(w, r)
 
-		defer func(i *interceptor) {
+		defer func(i *interceptor, inboundedAt time.Time) {
 			elapsed := time.Since(inboundedAt)
 			payloadSuze := i.payload.Len()
 			responseSize := i.response.Len()
@@ -36,13 +34,13 @@ func NewHttpPayloadHandler(logger *Logger, level LogLevel, nextFunc http.Handler
 
 			wg := sync.WaitGroup{}
 			wg.Add(1)
-			go func(i *interceptor) {
+			go func(wg *sync.WaitGroup, i *interceptor) {
 				defer wg.Done()
 				_, err := logger.WriteLog(level, i.Bytes())
 				if err != nil {
 					println(err.Error(), StackTrace())
 				}
-			}(i)
+			}(&wg, i)
 			defer wg.Wait()
 
 			// Colorize
@@ -69,7 +67,7 @@ func NewHttpPayloadHandler(logger *Logger, level LogLevel, nextFunc http.Handler
 				float64(payloadSuze)/1024,
 				float64(responseSize)/1024,
 			)
-		}(i)
+		}(i, time.Now().UTC())
 
 		nextFunc(iw, ir)
 

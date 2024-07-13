@@ -279,46 +279,46 @@ func TestLogger_PrintAndFatal(t *testing.T) {
 
 	wg := sync.WaitGroup{}
 	wg.Add(1)
-	go func(l *Logger) {
+	go func(wg *sync.WaitGroup, l *Logger, txt string) {
 		defer wg.Done()
-		l.Printf(logLevelDebug, "%s", m1)
-	}(l)
+		l.Printf(logLevelDebug, "%s", txt)
+	}(&wg, l, m1)
 	wg.Add(1)
-	go func(l *Logger) {
+	go func(wg *sync.WaitGroup, l *Logger, txt string) {
 		defer wg.Done()
-		l.Print(logLevelInfo, m2, uuid.NewV4().String(), uuid.NewV4().String())
-	}(l)
+		l.Print(logLevelInfo, txt, uuid.NewV4().String(), uuid.NewV4().String())
+	}(&wg, l, m2)
 	wg.Add(1)
-	go func(l *Logger) {
+	go func(wg *sync.WaitGroup, l *Logger, txt string) {
 		defer wg.Done()
-		l.Printf(logLevelSevere, "%s", m3)
-	}(l)
+		l.Printf(logLevelSevere, "%s", txt)
+	}(&wg, l, m3)
 	wg.Wait()
 	wg.Add(1)
-	go func(l *Logger) {
+	go func(wg *sync.WaitGroup, l *Logger, txt string) {
 		defer wg.Done()
 		defer func() {
 			_ = recover()
 		}()
-		l.Fatalf(logLevelDebug, "%s", m4)
-	}(l)
+		l.Fatalf(logLevelDebug, "%s", txt)
+	}(&wg, l, m4)
 	wg.Add(1)
-	go func(l *Logger) {
+	go func(wg *sync.WaitGroup, l *Logger, txt1, txt2 string) {
 		defer wg.Done()
 		defer func() {
 			_ = recover()
 		}()
-		l.Fatal(logLevelInfo, m5, m6, uuid.NewV4().String())
-	}(l)
+		l.Fatal(logLevelInfo, txt1, txt2, uuid.NewV4().String())
+	}(&wg, l, m5, m6)
 	wg.Wait()
 	wg.Add(1)
-	go func(l *Logger) {
+	go func(wg *sync.WaitGroup, l *Logger, txt string) {
 		defer wg.Done()
 		defer func() {
 			_ = recover()
 		}()
-		l.Fatalf(logLevelSevere, "%s", m7)
-	}(l)
+		l.Fatalf(logLevelSevere, "%s", txt)
+	}(&wg, l, m7)
 	wg.Wait()
 
 	if s := b.String(); len(s) == 0 {

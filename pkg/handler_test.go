@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/twinj/uuid"
+	"io"
 	"math/rand"
 	"os"
 	"path"
@@ -175,12 +176,12 @@ func TestCyclicOverwritingFilesHandlerForRaceCondition(t *testing.T) {
 	wg := sync.WaitGroup{}
 	for _, m := range messages {
 		wg.Add(1)
-		go func(txt string) {
+		go func(wg *sync.WaitGroup, w io.Writer, txt string) {
 			defer wg.Done()
-			if _, e := h.Write([]byte(txt)); e != nil {
+			if _, e := w.Write([]byte(txt)); e != nil {
 				err = errors.Join(err, e)
 			}
-		}(m)
+		}(&wg, h, m)
 	}
 	wg.Wait()
 	if err != nil {

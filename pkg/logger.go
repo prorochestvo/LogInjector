@@ -100,24 +100,25 @@ func (l *Logger) JoinAs(logLevel LogLevel, outputs ...func(w io.Writer)) {
 
 // WriteLog writes a log message
 func (l *Logger) WriteLog(level LogLevel, message []byte) (int, error) {
+	l.m.RLock()
+	defer l.m.RUnlock()
+
 	n := len(message)
 	errs := make([]error, 0)
 	wg := sync.WaitGroup{}
-
-	l.m.RLock()
-	defer l.m.RUnlock()
+	defer wg.Wait()
 
 	for _, h := range l.hooks {
 		if level != h.Level {
 			continue
 		}
 		wg.Add(1)
-		go func(w io.Writer) {
+		go func(wg *sync.WaitGroup, w io.Writer) {
 			defer wg.Done()
 			if _, e := w.Write(message); e != nil {
 				errs = append(errs, e)
 			}
-		}(h.Writer)
+		}(&wg, h.Writer)
 	}
 
 	if level < l.minimumLogLevel {
@@ -126,15 +127,13 @@ func (l *Logger) WriteLog(level LogLevel, message []byte) (int, error) {
 
 	for _, h := range l.handlers {
 		wg.Add(1)
-		go func(w io.Writer) {
+		go func(wg *sync.WaitGroup, w io.Writer) {
 			defer wg.Done()
 			if _, e := w.Write(message); e != nil {
 				errs = append(errs, e)
 			}
-		}(h)
+		}(&wg, h)
 	}
-
-	wg.Wait()
 
 	return n, errors.Join(errs...)
 }
