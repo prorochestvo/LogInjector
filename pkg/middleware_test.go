@@ -3,6 +3,7 @@ package loginjector
 import (
 	"bytes"
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"github.com/twinj/uuid"
 	"io"
 	"math/rand"
@@ -35,31 +36,21 @@ func TestNewHttpPayloadHandler(t *testing.T) {
 	}
 
 	h, err := NewHttpPayloadHandler(l, logLevelInfo, httpStatusOK)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	h(res, req)
 
-	if res.Code != http.StatusOK {
-		t.Fatalf("incorrect response code: got %d; expected %d", res.Code, http.StatusOK)
-	}
-	if s := res.Body.String(); strings.Contains(s, response) == false || strings.Contains(s, fmt.Sprintf("PAYLOAD_%d", len(request))) == false {
-		t.Fatalf("incorrect response body: %s", s)
-	}
-	if s := b.String(); len(s) == 0 {
-		t.Fatal("log context is empty")
-	} else if !strings.Contains(s, response) {
-		t.Fatalf("incorrect log context, response payload not found: %s", s)
-	} else if !strings.Contains(s, request) {
-		t.Fatalf("incorrect log context, request payload not found: %s", s)
-	} else if !strings.Contains(s, userAgent) {
-		t.Fatalf("incorrect log context, request headers not found: %s", s)
-	} else if !strings.Contains(s, responseID) {
-		t.Fatalf("incorrect log context, response headers not found: %s", s)
-	} else if !strings.Contains(s, req.Method) || !strings.Contains(s, req.URL.Path) || !strings.Contains(s, req.URL.RawQuery) {
-		t.Fatalf("incorrect log context, request head not found: %s", s)
-	} else if !strings.Contains(s, req.Proto) || !strings.Contains(s, http.StatusText(res.Code)) {
-		t.Fatalf("incorrect log context, response head not found: %s", s)
-	}
+	require.Equal(t, http.StatusOK, res.Code, res.Body.String())
+	require.Contains(t, res.Body.String(), response, "incorrect response body")
+	require.Contains(t, res.Body.String(), fmt.Sprintf("PAYLOAD_%d", len(request)), "incorrect response body")
+	require.Greater(t, len(b.String()), 32, "incorrect log context")
+	require.Contains(t, b.String(), response, "incorrect log context")
+	require.Contains(t, b.String(), request, "incorrect log context")
+	require.Contains(t, b.String(), userAgent, "incorrect log context")
+	require.Contains(t, b.String(), responseID, "incorrect log context")
+	require.Contains(t, b.String(), req.Method, "incorrect log context")
+	require.Contains(t, b.String(), req.URL.Path, "incorrect log context")
+	require.Contains(t, b.String(), req.URL.RawQuery, "incorrect log context")
+	require.Contains(t, b.String(), req.Proto, "incorrect log context")
+	require.Contains(t, b.String(), http.StatusText(res.Code), "incorrect log context")
 }

@@ -2,6 +2,7 @@ package loginjector
 
 import (
 	"bytes"
+	"github.com/stretchr/testify/require"
 	"github.com/twinj/uuid"
 	"io"
 	"log"
@@ -11,259 +12,166 @@ import (
 )
 
 const (
-	logLevelDebug   = 0x00
-	logLevelInfo    = 0x01
-	logLevelWarning = 0x02
-	logLevelSevere  = 0xF0
+	logLevelDebug   LogLevel = 0x00
+	logLevelInfo    LogLevel = 0x01
+	logLevelWarning LogLevel = 0x02
+	logLevelSevere  LogLevel = 0xF0
 	//logLevelSilence = 0xFF
 )
 
 func TestNewLogger(t *testing.T) {
 	l, err := NewLogger(logLevelDebug)
-	if err != nil {
-		t.Fatalf("NewLogger method returned an error: %v", err)
-	}
-
-	if l == nil {
-		t.Fatal("NewLogger method returned nil")
-	}
-
-	if l.minimumLogLevel != logLevelDebug {
-		t.Fatalf("NewLogger method returned a logger with an unexpected minimum log level: %v", l.minimumLogLevel)
-	}
-
-	if n := len(l.hooks); n != 0 {
-		t.Fatalf("NewLogger method returned a logger with unexpected hooks: %d", n)
-	}
-
-	if n := len(l.handlers); n != 1 {
-		t.Fatalf("NewLogger method returned a logger with unexpected handlers: %d", n)
-	}
+	require.NoError(t, err)
+	require.NotEqual(t, nil, l)
+	require.Equal(t, logLevelDebug, l.minimumLogLevel)
+	require.Equal(t, len(l.hooks), 0, "unexpected hooks count")
+	require.Equal(t, len(l.handlers), 1, "unexpected handlers count")
 }
 
 func TestLogger_SetMinLevel(t *testing.T) {
-	l, _ := NewLogger(logLevelDebug)
-
-	if l.minimumLogLevel != logLevelDebug {
-		t.Fatalf("SetMinLevel method set an unexpected minimum log level: %v", l.minimumLogLevel)
-	}
+	l, err := NewLogger(logLevelDebug)
+	require.NoError(t, err)
+	require.NotEqual(t, nil, l)
+	require.NotEqual(t, logLevelInfo, l.minimumLogLevel)
 
 	l.SetMinLevel(logLevelInfo)
-
-	if l.minimumLogLevel != logLevelInfo {
-		t.Fatalf("SetMinLevel method set an unexpected minimum log level: %v", l.minimumLogLevel)
-	}
+	require.Equal(t, logLevelInfo, l.minimumLogLevel)
 }
 
 func TestLogger_Hook(t *testing.T) {
 	m := uuid.NewV4().String()
 	b := bytes.NewBufferString("")
-	l, _ := NewLogger(logLevelInfo, SilenceHandler())
-
-	if n := len(l.hooks); n != 0 {
-		t.Fatalf("Hook method added an unexpected number of hooks: %d", n)
-	}
+	l, err := NewLogger(logLevelInfo, SilenceHandler())
+	require.NoError(t, err)
+	require.NotEqual(t, nil, l)
+	require.Equal(t, len(l.hooks), 0, "unexpected number of hooks")
 
 	hookID := l.Hook(b, logLevelWarning)
-	if n := len(l.hooks); n != 1 {
-		t.Fatalf("Hook method added an unexpected number of hooks: %d", n)
-	}
-	if l.hooks[0].ID != hookID {
-		t.Fatalf("Hook method added a hook with an unexpected ID: %v", l.hooks[0].ID)
-	}
-	if l.hooks[0].Level != logLevelWarning {
-		t.Fatalf("Hook method added a hook with an unexpected minimum log level: %v", l.hooks[0].Level)
-	}
+	require.Equal(t, len(l.hooks), 1, "unexpected number of hooks")
+	require.Equal(t, hookID, l.hooks[0].ID, "unexpected hook[0].id")
+	require.Equal(t, logLevelWarning, l.hooks[0].Level, "unexpected hook[0].Level")
 	n, err := l.WriteLog(logLevelWarning, []byte(m))
-	if err != nil {
-		t.Fatalf("Write method returned an error: %v", err)
-	}
-	if n != len(m) {
-		t.Errorf("Write method returned an unexpected length: %d", n)
-	}
-	if s := b.String(); s != m {
-		t.Errorf("Write method wrote an unexpected message: %v", s)
-	}
+	require.NoError(t, err)
+	require.Equal(t, len(m), n)
+	require.Contains(t, b.String(), m)
 
 	b.Reset()
 	m = uuid.NewV4().String()
 	n, err = l.WriteLog(logLevelDebug, []byte(m))
-	if err != nil {
-		t.Fatalf("Write method returned an error: %v", err)
-	}
-	if n != 0 {
-		t.Errorf("Write method returned an unexpected length: %d", n)
-	}
-	if s := b.String(); strings.Contains(s, m) {
-		t.Errorf("Write method wrote an unexpected message: %v", s)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 0, n)
+	require.NotContains(t, b.String(), m)
 
 	b.Reset()
 	m = uuid.NewV4().String()
 	n, err = l.WriteLog(logLevelSevere, []byte(m))
-	if err != nil {
-		t.Fatalf("Write method returned an error: %v", err)
-	}
-	if n == 0 {
-		t.Errorf("Write method returned an unexpected length: %d", n)
-	}
-	if s := b.String(); strings.Contains(s, m) {
-		t.Errorf("Write method wrote an unexpected message: %v", s)
-	}
+	require.NoError(t, err)
+	require.Equal(t, len(m), n)
+	require.NotContains(t, b.String(), m)
 }
 
 func TestLogger_Unhook(t *testing.T) {
 	m := uuid.NewV4().String()
 	b := bytes.NewBufferString("")
-	l, _ := NewLogger(logLevelInfo, SilenceHandler())
+	l, err := NewLogger(logLevelInfo, SilenceHandler())
+	require.NoError(t, err)
+	require.NotEqual(t, nil, l)
 
 	hookID := l.Hook(b, logLevelWarning, logLevelSevere, logLevelSevere)
-
-	if n := len(l.hooks); n != 3 {
-		t.Fatalf("Hook method added an unexpected number of hooks: %d", n)
-	}
+	require.Len(t, l.hooks, 3, "unexpected number of hooks")
 
 	l.Unhook(hookID)
+	require.Len(t, l.hooks, 0, "unexpected number of hooks")
 
-	if n := len(l.hooks); n != 0 {
-		t.Fatalf("Unhook method removed an unexpected number of hooks: %d", n)
-	}
 	n, err := l.WriteLog(logLevelWarning, []byte(m))
-	if err != nil {
-		t.Fatalf("Write method returned an error: %v", err)
-	}
-	if n != len(m) {
-		t.Errorf("Write method returned an unexpected length: %d", n)
-	}
-	if s := b.String(); len(s) != 0 {
-		t.Errorf("Write method wrote an unexpected message: %v", s)
-	}
+	require.NoError(t, err)
+	require.Len(t, m, n, "method returned an unexpected length")
+	require.Equal(t, len(b.String()), 0, "unexpected message")
 }
 
 func TestLogger_JoinAs(t *testing.T) {
 	m := uuid.NewV4().String()
 	b := bytes.NewBufferString("")
-	l, _ := NewLogger(logLevelInfo, b)
+	l, err := NewLogger(logLevelInfo, b)
+	require.NoError(t, err)
+	require.NotEqual(t, nil, l)
 
-	if n := len(l.hooks); n != 0 {
-		t.Fatalf("JoinAs method added an unexpected number of hooks: %d", n)
-	}
+	require.NoError(t, err)
+	require.Len(t, l.hooks, 0)
 
 	var w io.Writer = nil
-	l.JoinAs(logLevelWarning, func(nW io.Writer) {
-		w = nW
-	})
+	l.JoinAs(logLevelWarning, func(nW io.Writer) { w = nW })
 
 	n, err := w.Write([]byte(m))
-	if err != nil {
-		t.Fatalf("Write method returned an error: %v", err)
-	}
-	if n != len(m) {
-		t.Errorf("Write method returned an unexpected length: %d", n)
-	}
-	if s := b.String(); s != m {
-		t.Errorf("Write method wrote an unexpected message: %v", s)
-	}
+	require.NoError(t, err)
+	require.Len(t, m, n)
+	require.Equal(t, m, b.String())
 
 	b.Reset()
 	m = uuid.NewV4().String()
 
 	n, err = w.Write([]byte(m))
-	if err != nil {
-		t.Fatalf("Write method returned an error: %v", err)
-	}
-	if n != len(m) {
-		t.Errorf("Write method returned an unexpected length: %d", n)
-	}
-	if s := b.String(); s != m {
-		t.Errorf("Write method wrote an unexpected message: %v", s)
-	}
+	require.NoError(t, err)
+	require.Len(t, m, n)
+	require.Equal(t, m, b.String())
 }
 
 func TestLogger_WriteLog(t *testing.T) {
 	m := uuid.NewV4().String()
 	b := bytes.NewBufferString("")
-	l, _ := NewLogger(logLevelInfo, b)
+	l, err := NewLogger(logLevelInfo, b)
+	require.NoError(t, err)
+	require.NotEqual(t, nil, l)
 
 	n, err := l.WriteLog(logLevelSevere, []byte(m))
-	if err != nil {
-		t.Fatalf("Write method returned an error: %v", err)
-	}
-	if n != len(m) {
-		t.Errorf("Write method returned an unexpected length: %d", n)
-	}
-	if s := b.String(); s != m {
-		t.Errorf("Write method wrote an unexpected message: %v", s)
-	}
+	require.NoError(t, err)
+	require.Len(t, m, n)
+	require.Equal(t, m, b.String())
 
 	b.Reset()
 	m = uuid.NewV4().String()
 
 	n, err = l.WriteLog(logLevelDebug, []byte(m))
-	if err != nil {
-		t.Fatalf("Write method returned an error: %v", err)
-	}
-	if n != 0 {
-		t.Errorf("Write method returned an unexpected length: %d", n)
-	}
-	if s := b.String(); len(s) != 0 {
-		t.Errorf("Write method wrote an unexpected message: %v", s)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 0, n)
+	require.Len(t, b.String(), 0)
 
 	b.Reset()
 	m = uuid.NewV4().String()
 
 	n, err = l.WriteLog(logLevelSevere, []byte(m))
-	if err != nil {
-		t.Fatalf("Write method returned an error: %v", err)
-	}
-	if n != len(m) {
-		t.Errorf("Write method returned an unexpected length: %d", n)
-	}
-	if s := b.String(); s != m {
-		t.Errorf("Write method wrote an unexpected message: %v", s)
-	}
+	require.NoError(t, err)
+	require.Len(t, m, n)
+	require.Equal(t, m, b.String())
 }
 
 func TestLogger_Write(t *testing.T) {
 	m := uuid.NewV4().String()
 	b := bytes.NewBufferString("")
-	l, _ := NewLogger(logLevelInfo, b)
+	l, err := NewLogger(logLevelInfo, b)
+	require.NoError(t, err)
+	require.NotEqual(t, nil, l)
 
 	log.SetOutput(l)
 
 	n, err := l.Write([]byte(m))
-	if err != nil {
-		t.Fatalf("Write method returned an error: %v", err)
-	}
-	if n != len(m) {
-		t.Errorf("Write method returned an unexpected length: %d", n)
-	}
-	if s := b.String(); s != m {
-		t.Errorf("Write method wrote an unexpected message: %v", s)
-	}
+	require.NoError(t, err)
+	require.Len(t, m, n)
+	require.Equal(t, m, b.String())
 
 	b.Reset()
 	m = uuid.NewV4().String()
 
 	n, err = l.Write([]byte(m))
-	if err != nil {
-		t.Fatalf("Write method returned an error: %v", err)
-	}
-	if n != len(m) {
-		t.Errorf("Write method returned an unexpected length: %d", n)
-	}
-	if s := b.String(); s != m {
-		t.Errorf("Write method wrote an unexpected message: %v", s)
-	}
+	require.NoError(t, err)
+	require.Len(t, m, n)
+	require.Equal(t, m, b.String())
 
 	b.Reset()
 	m = uuid.NewV4().String()
 	log.Println(m)
 
-	if s := b.String(); !strings.Contains(s, m) {
-		t.Errorf("Write method wrote an unexpected message: %v", s)
-	}
+	require.Contains(t, b.String(), m)
 }
 
 func TestLogger_PrintAndFatal(t *testing.T) {
@@ -275,7 +183,9 @@ func TestLogger_PrintAndFatal(t *testing.T) {
 	m6 := "M6_" + uuid.NewV4().String()
 	m7 := "M7_" + uuid.NewV4().String()
 	b := bytes.NewBufferString("")
-	l, _ := NewLogger(logLevelInfo, b)
+	l, err := NewLogger(logLevelInfo, b)
+	require.NoError(t, err)
+	require.NotEqual(t, nil, l)
 
 	wg := sync.WaitGroup{}
 	wg.Add(1)
@@ -321,28 +231,21 @@ func TestLogger_PrintAndFatal(t *testing.T) {
 	}(&wg, l, m7)
 	wg.Wait()
 
-	if s := b.String(); len(s) == 0 {
-		t.Errorf("Print method wrote an unexpected message: %v", s)
-	} else if strings.Contains(s, m1) {
-		t.Errorf("Print method wrote an unexpected message: %v", s)
-	} else if !strings.Contains(s, m2) {
-		t.Errorf("Print method wrote an unexpected message: %v", s)
-	} else if !strings.Contains(s, m3) {
-		t.Errorf("Print method wrote an unexpected message: %v", s)
-	} else if strings.Contains(s, m4) {
-		t.Errorf("Print method wrote an unexpected message: %v", s)
-	} else if !strings.Contains(s, m5) {
-		t.Errorf("Print method wrote an unexpected message: %v", s)
-	} else if !strings.Contains(s, m6) {
-		t.Errorf("Print method wrote an unexpected message: %v", s)
-	} else if !strings.Contains(s, m7) {
-		t.Errorf("Print method wrote an unexpected message: %v", s)
-	}
+	require.NotEqual(t, 0, len(b.String()))
+	require.NotContains(t, b.String(), m1)
+	require.Contains(t, b.String(), m2)
+	require.Contains(t, b.String(), m3)
+	require.NotContains(t, b.String(), m4)
+	require.Contains(t, b.String(), m5)
+	require.Contains(t, b.String(), m6)
+	require.Contains(t, b.String(), m7)
 }
 
 func TestLogger_WriterAs(t *testing.T) {
 	b := bytes.NewBufferString("")
-	l, _ := NewLogger(logLevelInfo, b)
+	l, err := NewLogger(logLevelInfo, b)
+	require.NoError(t, err)
+	require.NotEqual(t, nil, l)
 
 	w := l.WriterAs(logLevelWarning)
 	m := uuid.NewV4().String()

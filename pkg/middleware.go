@@ -3,7 +3,6 @@ package loginjector
 import (
 	"bytes"
 	"fmt"
-	"github.com/prorochestvo/loginjector/internal/terminal"
 	"io"
 	"net/http"
 	"strings"
@@ -38,29 +37,13 @@ func NewHttpPayloadHandler(logger *Logger, level LogLevel, nextFunc http.Handler
 				defer wg.Done()
 				_, err := logger.WriteLog(level, i.Bytes())
 				if err != nil {
-					println(err.Error(), StackTrace())
+					println(err.Error())
 				}
 			}(&wg, i)
 			defer wg.Wait()
 
-			// Colorize
-			status := ""
-			switch responseCode / 100 {
-			case 1:
-				status = terminal.Colorize(fmt.Sprintf("%d", i.code), terminal.Blue)
-			case 2:
-				status = terminal.Colorize(fmt.Sprintf("%d", i.code), terminal.Green)
-			case 3:
-				status = terminal.Colorize(fmt.Sprintf("%d", i.code), terminal.Purple)
-			case 4:
-				status = terminal.Colorize(fmt.Sprintf("%d", i.code), terminal.Yellow)
-			default:
-				status = terminal.Colorize(fmt.Sprintf("%d", i.code), terminal.Red)
-			}
-
-			fmt.Printf(
-				"[%s] %s %s: %0.3f msec; ↓%0.2fKb; ↑%0.2fKb;\n",
-				status,
+			fmt.Printf("[%d] %s %s: %0.3f msec; ↓%0.2fKb; ↑%0.2fKb;\n",
+				responseCode,
 				r.Method,
 				r.URL.Path,
 				float64(elapsed)/1000000,

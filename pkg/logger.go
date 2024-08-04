@@ -10,13 +10,13 @@ import (
 
 // NewLogger creates a new logger with the given minimum log level and handlers
 // If no handlers are provided, a default print handler is added
-func NewLogger(minLogLevel LogLevel, handlers ...io.Writer) (*Logger, error) {
+func NewLogger(min LogLevel, handlers ...io.Writer) (*Logger, error) {
 	if handlers == nil || len(handlers) == 0 {
 		handlers = []io.Writer{PrintHandler()}
 	}
 
 	l := &Logger{
-		minimumLogLevel: minLogLevel,
+		minimumLogLevel: min,
 		handlers:        handlers,
 	}
 
@@ -140,40 +140,40 @@ func (l *Logger) WriteLog(level LogLevel, message []byte) (int, error) {
 
 // Printf writes a formatted log message
 func (l *Logger) Printf(level LogLevel, format string, args ...any) {
-	s := fmt.Sprintf(format, args...)
-	_, err := l.WriteLog(level, []byte(s+"\n"))
+	m := fmt.Sprintf(format, args...)
+	_, err := l.WriteLog(level, []byte(m+"\n"))
 	if err != nil {
-		println(err.Error(), StackTrace())
+		println(err.Error())
 	}
 }
 
 // Print writes a log message
 func (l *Logger) Print(level LogLevel, args ...any) {
-	s := fmt.Sprint(args...)
-	_, err := l.WriteLog(level, []byte(s+"\n"))
+	m := fmt.Sprint(args...)
+	_, err := l.WriteLog(level, []byte(m+"\n"))
 	if err != nil {
-		println(err.Error(), StackTrace())
+		println(err.Error())
 	}
 }
 
 // Fatalf writes a formatted log message and exits the program
 func (l *Logger) Fatalf(level LogLevel, format string, args ...any) {
-	s := fmt.Sprintf(format, args...)
-	_, err := l.WriteLog(level, []byte(s+"\n"))
+	m := fmt.Sprintf(format, args...)
+	_, err := l.WriteLog(level, []byte(m+"\n"))
 	if err != nil {
-		println(err.Error(), StackTrace())
+		println(err.Error())
 	}
-	panic(s)
+	panic(m)
 }
 
 // Fatal writes a log message and exits the program
 func (l *Logger) Fatal(level LogLevel, args ...any) {
-	s := fmt.Sprint(args...)
-	_, err := l.WriteLog(level, []byte(s+"\n"))
+	m := fmt.Sprint(args...)
+	_, err := l.WriteLog(level, []byte(m+"\n"))
 	if err != nil {
-		println(err.Error(), StackTrace())
+		println(err.Error())
 	}
-	panic(s)
+	panic(m)
 }
 
 // Write writes a log message with the minimum log level

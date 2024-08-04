@@ -9,7 +9,7 @@ import (
 func CloseOrPanic(closer io.Closer) {
 	err := closer.Close()
 	if err != nil {
-		panic(err.Error() + "\n" + StackTrace())
+		panic(err)
 	}
 }
 
@@ -18,6 +18,14 @@ func CloseOrLog(closer io.Closer) {
 	err := closer.Close()
 	if err != nil {
 		log.Println(err)
+	}
+}
+
+// CloseOrPrintLn closes the closer and prints the error if there is one.
+func CloseOrPrintLn(closer io.Closer) {
+	err := closer.Close()
+	if err != nil {
+		println(err)
 	}
 }
 
