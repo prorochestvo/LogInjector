@@ -157,6 +157,12 @@ func TestCyclicOverwritingFilesHandlerForRaceCondition(t *testing.T) {
 }
 
 func TestFileByFormatHandler(t *testing.T) {
+
+	tmpFolder := path.Join(os.TempDir(), fmt.Sprintf("log-%d", rand.Uint64()))
+	err := os.MkdirAll(tmpFolder, os.ModePerm)
+	require.NoError(t, err)
+	defer func(path string) { _ = os.RemoveAll(path) }(tmpFolder)
+
 	m := sync.Mutex{}
 	fileNumber := 0
 	fileNameGenerator := func() string {
@@ -165,8 +171,34 @@ func TestFileByFormatHandler(t *testing.T) {
 		fileNumber++
 		return time.Date(2000, 1, fileNumber, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
 	}
-	FileByFormatHandler("test", 10, fileNameGenerator)
-	t.Skipf("test not implemented")
+	for i := 0; i < 40; i++ {
+		file := FileByFormatHandler(tmpFolder, 4, fileNameGenerator)
+		file.Write([]byte("Hello, world"))
+	}
+
+	myDaysToKeep := []string{"2000-02-09", "2000-0-08", "2000-02-07", "2000-02-06"}
+	var myFilesToKeep []string
+	for _, dateString := range myDaysToKeep {
+		file_name := path.Join(tmpFolder, fmt.Sprintf("%s.%s", dateString, defaultFileExtension))
+		//myFilesToKeep = append(myFilesToKeep, file_name)
+		myFilesToKeep = append(myFilesToKeep, strings.ReplaceAll(file_name, "/", "\\"))
+	}
+
+	files, err := extractFilesOrFail(tmpFolder)
+	require.NoError(t, err)
+	require.Len(t, files, 4, "incorrect files count")
+
+	err = validateFileNames(files, myFilesToKeep)
+	require.NoError(t, err)
+}
+
+func validateFileNames(m map[string]string, keys []string) error {
+	for _, key := range keys {
+		if _, exists := m[key]; !exists {
+			return fmt.Errorf("key %q from slice is not found in the map", key)
+		}
+	}
+	return nil
 }
 
 func TestFilePerDaysHandlerForRaceCondition(t *testing.T) {
