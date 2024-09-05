@@ -169,9 +169,13 @@ func TestFileByFormatHandler(t *testing.T) {
 		m.Lock()
 		defer m.Unlock()
 		fileNumber++
+		// TODO: REVIEW: 0-39 iterations will out of range of days for January.
+		// TODO: REVIEW: time.Date is smart enough to handle this,
+		// TODO: REVIEW: but it's better to use a more realistic date range
 		return time.Date(2000, 1, fileNumber, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
 	}
 	for i := 0; i < 40; i++ {
+		// TODO: REVIEW: here we are creating a process handler, non required recreate it
 		file := FileByFormatHandler(tmpFolder, 4, fileNameGenerator)
 		file.Write([]byte("Hello, world"))
 	}
@@ -181,6 +185,7 @@ func TestFileByFormatHandler(t *testing.T) {
 	for _, dateString := range myDaysToKeep {
 		file_name := path.Join(tmpFolder, fmt.Sprintf("%s.%s", dateString, defaultFileExtension))
 		//myFilesToKeep = append(myFilesToKeep, file_name)
+		// TODO: REVIEW: needless this replacing, therefore the file_name is already in the correct format
 		myFilesToKeep = append(myFilesToKeep, strings.ReplaceAll(file_name, "/", "\\"))
 	}
 
@@ -199,6 +204,54 @@ func validateFileNames(m map[string]string, keys []string) error {
 		}
 	}
 	return nil
+}
+
+// TODO: REVIEW: example how it can be done
+func TestFileByFormatHandlerV2(t *testing.T) {
+	startedAt := time.Now().UTC()
+
+	tmpFolder := path.Join(os.TempDir(), fmt.Sprintf("log-%d", rand.Uint64()))
+	err := os.MkdirAll(tmpFolder, os.ModePerm)
+	require.NoError(t, err)
+	defer func(path string) { require.NoError(t, os.RemoveAll(path)) }(tmpFolder)
+
+	expectedFileNames := []string{
+		startedAt.Add(time.Hour*24*5).Format(time.DateOnly) + ".log",
+		startedAt.Add(time.Hour*24*4).Format(time.DateOnly) + ".log",
+		startedAt.Add(time.Hour*24*3).Format(time.DateOnly) + ".log",
+	}
+	expectedFileContexts := []string{
+		"f1:i0001", "f1:i0002",
+		"f2:i0001", "f2:i0002",
+		"f3:i0001", "f3:i0002",
+		"f4:i0001", "f4:i0002",
+		"f5:i0001", "f5:i0002",
+	}
+
+	fileIndexMutex := sync.Mutex{}
+	fileIndex := 0
+	handler := FileByFormatHandler(tmpFolder, 3, func() string {
+		fileIndexMutex.Lock()
+		defer fileIndexMutex.Unlock()
+		fileIndex++
+		return startedAt.Add(time.Hour * 12 * time.Duration(fileIndex)).Format(time.DateOnly)
+	})
+
+	for _, fileContext := range expectedFileContexts {
+		_, err = handler.Write([]byte(fileContext))
+		require.NoError(t, err)
+	}
+
+	files, err := extractFilesOrFail(tmpFolder)
+	require.NoError(t, err)
+	require.Len(t, files, 3, "incorrect files count")
+	for i, n := range expectedFileNames {
+		index := len(expectedFileContexts) - (i << 1) - 1 // index values: 9, 7, 5
+		expectedFileContext := strings.Join(expectedFileContexts[index-1:index+1], "\n") + "\n"
+		fData, fExists := files[n]
+		require.True(t, fExists)
+		require.Equalf(t, expectedFileContext, fData, "index: %d", i)
+	}
 }
 
 func TestFilePerDaysHandlerForRaceCondition(t *testing.T) {
