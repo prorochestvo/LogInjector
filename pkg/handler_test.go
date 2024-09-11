@@ -161,7 +161,7 @@ func TestFileByFormatHandler(t *testing.T) {
 	tmpFolder := path.Join(os.TempDir(), fmt.Sprintf("log-%d", rand.Uint64()))
 	err := os.MkdirAll(tmpFolder, os.ModePerm)
 	require.NoError(t, err)
-	defer func(path string) { _ = os.RemoveAll(path) }(tmpFolder)
+	//defer func(path string) { _ = os.RemoveAll(path) }(tmpFolder)
 
 	m := sync.Mutex{}
 	fileNumber := 0
@@ -174,11 +174,41 @@ func TestFileByFormatHandler(t *testing.T) {
 		// TODO: REVIEW: but it's better to use a more realistic date range
 		return time.Date(2000, 1, fileNumber, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
 	}
+	handler := FileByFormatHandler(tmpFolder, 4, fileNameGenerator)
+
+	var wg sync.WaitGroup
+
+	// Создаем 40 файлов
 	for i := 0; i < 40; i++ {
-		// TODO: REVIEW: here we are creating a process handler, non required recreate it
-		file := FileByFormatHandler(tmpFolder, 4, fileNameGenerator)
-		file.Write([]byte("Hello, world"))
+		wg.Add(1)
+
+		// Генерируем уникальное имя для каждого файла
+		go func(handler io.Writer) {
+			defer wg.Done()
+
+			_, err = handler.Write([]byte("Hello, world"))
+			if err != nil {
+				fmt.Printf("Ошибка при записи в файл: %s\n", err)
+			}
+		}(handler) // Передаем индекс `i` в каждую горутину
 	}
+
+	// Ожидаем завершения всех горутин
+	wg.Wait()
+
+	fmt.Println("Все файлы созданы и записаны.")
+
+	//var wg sync.WaitGroup
+	//for i := 0; i < 40; i++ {
+	//	wg.Add(1)
+	//	go func(writer2 io.Writer) {
+	//		defer wg.Done()
+	//		w.Writer([]byte("Hello world"))
+	//	}(handler)
+	//	wg.Wait()
+
+	// TODO: REVIEW: here we are creating a process handler, non required recreate it
+	//go func(w io.Writer) { w.Write([]byte("Hello, world")) }(handler)
 
 	myDaysToKeep := []string{"2000-02-09", "2000-0-08", "2000-02-07", "2000-02-06"}
 	var myFilesToKeep []string
@@ -249,6 +279,9 @@ func TestFileByFormatHandlerV2(t *testing.T) {
 		index := len(expectedFileContexts) - (i << 1) - 1 // index values: 9, 7, 5
 		expectedFileContext := strings.Join(expectedFileContexts[index-1:index+1], "\n") + "\n"
 		fData, fExists := files[n]
+		fmt.Print(n)
+		fmt.Print(files)
+		fmt.Print(fExists)
 		require.True(t, fExists)
 		require.Equalf(t, expectedFileContext, fData, "index: %d", i)
 	}
@@ -293,7 +326,7 @@ func extractFilesOrFail(folder string) (map[string]string, error) {
 	r := make(map[string]string, 0)
 	for _, filePath := range files {
 		b, e := os.ReadFile(filePath)
-		_, filePath = path.Split(filePath)
+		filePath = path.Base(filePath)
 		if e != nil {
 			r[filePath] = e.Error()
 		} else {
