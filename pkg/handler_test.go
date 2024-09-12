@@ -161,7 +161,7 @@ func TestFileByFormatHandler(t *testing.T) {
 	tmpFolder := path.Join(os.TempDir(), fmt.Sprintf("log-%d", rand.Uint64()))
 	err := os.MkdirAll(tmpFolder, os.ModePerm)
 	require.NoError(t, err)
-	//defer func(path string) { _ = os.RemoveAll(path) }(tmpFolder)
+	defer func(path string) { _ = os.RemoveAll(path) }(tmpFolder)
 
 	m := sync.Mutex{}
 	fileNumber := 0
@@ -175,56 +175,49 @@ func TestFileByFormatHandler(t *testing.T) {
 		return time.Date(2000, 1, fileNumber, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
 	}
 	handler := FileByFormatHandler(tmpFolder, 4, fileNameGenerator)
+	expectedFileContexts := []string{
+		"f1:i0001", "f2:i0001",
+		"f3:i0001", "f4:i0001",
+		"f5:i0001", "f6:i0001",
+		"f7:i0001", "f8:i0001",
+		"f9:i0001", "f0:i0001",
+	}
 
 	var wg sync.WaitGroup
 
-	// Создаем 40 файлов
-	for i := 0; i < 40; i++ {
+	for _, fileContext := range expectedFileContexts {
 		wg.Add(1)
-
-		// Генерируем уникальное имя для каждого файла
 		go func(handler io.Writer) {
 			defer wg.Done()
-
-			_, err = handler.Write([]byte("Hello, world"))
-			if err != nil {
-				fmt.Printf("Ошибка при записи в файл: %s\n", err)
-			}
-		}(handler) // Передаем индекс `i` в каждую горутину
+			_, err = handler.Write([]byte(fileContext))
+			require.NoError(t, err)
+		}(handler)
 	}
 
-	// Ожидаем завершения всех горутин
+	//Waiting for all goroutines to finish
 	wg.Wait()
 
-	fmt.Println("Все файлы созданы и записаны.")
-
-	//var wg sync.WaitGroup
-	//for i := 0; i < 40; i++ {
-	//	wg.Add(1)
-	//	go func(writer2 io.Writer) {
-	//		defer wg.Done()
-	//		w.Writer([]byte("Hello world"))
-	//	}(handler)
-	//	wg.Wait()
-
 	// TODO: REVIEW: here we are creating a process handler, non required recreate it
-	//go func(w io.Writer) { w.Write([]byte("Hello, world")) }(handler)
 
-	myDaysToKeep := []string{"2000-02-09", "2000-0-08", "2000-02-07", "2000-02-06"}
-	var myFilesToKeep []string
-	for _, dateString := range myDaysToKeep {
-		file_name := path.Join(tmpFolder, fmt.Sprintf("%s.%s", dateString, defaultFileExtension))
-		//myFilesToKeep = append(myFilesToKeep, file_name)
-		// TODO: REVIEW: needless this replacing, therefore the file_name is already in the correct format
-		myFilesToKeep = append(myFilesToKeep, strings.ReplaceAll(file_name, "/", "\\"))
+	myFilesToKeep := map[string]string{
+		"2000-01-10.log": "f0:i0001\n",
+		"2000-01-09.log": "f9:i0001\n",
+		"2000-01-08.log": "f8:i0001\n",
+		"2000-01-07.log": "f7:i0001\n",
 	}
 
 	files, err := extractFilesOrFail(tmpFolder)
+	//newShortFiles := map[string]string{}
 	require.NoError(t, err)
 	require.Len(t, files, 4, "incorrect files count")
 
-	err = validateFileNames(files, myFilesToKeep)
-	require.NoError(t, err)
+	for fileName, context := range files {
+		fileNameParts := strings.Split(fileName, "\\")
+		fileNameShort := fileNameParts[len(fileNameParts)-1]
+		expectedContext, exists := myFilesToKeep[fileNameShort]
+		require.True(t, exists)
+		require.Equalf(t, expectedContext, context, "file: %s", fileNameShort)
+	}
 }
 
 func validateFileNames(m map[string]string, keys []string) error {
