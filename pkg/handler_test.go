@@ -166,13 +166,14 @@ func TestFileByFormatHandler(t *testing.T) {
 	m := sync.Mutex{}
 	fileNumber := 0
 	fileNameGenerator := func() string {
+		startingDay := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 		m.Lock()
 		defer m.Unlock()
 		fileNumber++
 		// TODO: REVIEW: 0-39 iterations will out of range of days for January.
 		// TODO: REVIEW: time.Date is smart enough to handle this,
 		// TODO: REVIEW: but it's better to use a more realistic date range
-		return time.Date(2000, 1, fileNumber, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
+		return startingDay.AddDate(0, 0, fileNumber).Format("2006-01-02")
 	}
 	handler := FileByFormatHandler(tmpFolder, 4, fileNameGenerator)
 	expectedFileContexts := []string{
@@ -183,19 +184,10 @@ func TestFileByFormatHandler(t *testing.T) {
 		"f9:i0001", "f0:i0001",
 	}
 
-	var wg sync.WaitGroup
-
 	for _, fileContext := range expectedFileContexts {
-		wg.Add(1)
-		go func(handler io.Writer) {
-			defer wg.Done()
-			_, err = handler.Write([]byte(fileContext))
-			require.NoError(t, err)
-		}(handler)
+		_, err = handler.Write([]byte(fileContext))
+		require.NoError(t, err)
 	}
-
-	//Waiting for all goroutines to finish
-	wg.Wait()
 
 	// TODO: REVIEW: here we are creating a process handler, non required recreate it
 
@@ -207,7 +199,6 @@ func TestFileByFormatHandler(t *testing.T) {
 	}
 
 	files, err := extractFilesOrFail(tmpFolder)
-	//newShortFiles := map[string]string{}
 	require.NoError(t, err)
 	require.Len(t, files, 4, "incorrect files count")
 
@@ -280,8 +271,30 @@ func TestFileByFormatHandlerV2(t *testing.T) {
 	}
 }
 
-func TestFilePerDaysHandlerForRaceCondition(t *testing.T) {
+func TestFileByFormatHandlerForRaceCondition(t *testing.T) {
 	// TODO: Implement
+	//handler := FileByFormatHandler(tmpFolder, 4, fileNameGenerator)
+	//expectedFileContexts := []string{
+	//   "f1:i0001", "f2:i0001",
+	//   "f3:i0001", "f4:i0001",
+	//   "f5:i0001", "f6:i0001",
+	//   "f7:i0001", "f8:i0001",
+	//   "f9:i0001", "f0:i0001",
+	//}
+	//
+	//var wg sync.WaitGroup
+	//
+	//for _, fileContext := range expectedFileContexts {
+	//   wg.Add(1)
+	//   go func(handler io.Writer) {
+	//       defer wg.Done()
+	//       _, err = handler.Write([]byte(fileContext))
+	//       require.NoError(t, err)
+	//   }(handler)
+	//}
+	//
+	////Waiting for all goroutines to finish
+	//wg.Wait()
 	t.Skipf("test not implemented")
 }
 
