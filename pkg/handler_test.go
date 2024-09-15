@@ -171,10 +171,7 @@ func TestFileByFormatHandler(t *testing.T) {
 		m.Lock()
 		defer m.Unlock()
 		fileNumber++
-		// TODO: REVIEW: 0-39 iterations will out of range of days for January.
-		// TODO: REVIEW: time.Date is smart enough to handle this,
-		// TODO: REVIEW: but it's better to use a more realistic date range.
-		return startingDay.AddDate(0, 0, fileNumber).Format("2006-01-02") // TODO: could use the .Add() method for incrementing the date
+		return startingDay.AddDate(0, 0, fileNumber).Format("2006-01-02")
 	}
 	handler := FileByFormatHandler(tmpFolder, 4, fileNameGenerator)
 	expectedFileContexts := []string{
@@ -200,14 +197,11 @@ func TestFileByFormatHandler(t *testing.T) {
 	files, err := extractFilesOrFail(tmpFolder)
 	require.NoError(t, err)
 	require.Len(t, files, 4, "incorrect files count")
-	// TODO: I suggest to build upon on the expectedDataset values
-	// I build upon the files value, since this allowed us to get the filename instead the absolute path
-	for fileName, fileContext := range files {
-		fileNameParts := strings.Split(fileName, "\\")
-		fileNameShort := fileNameParts[len(fileNameParts)-1]
-		expectedContext, exists := expectedDataset[fileNameShort]
+
+	for expectedFileName, expectedFileContext := range expectedDataset {
+		actualContext, exists := files[expectedFileName]
 		require.True(t, exists)
-		require.Equal(t, expectedContext, fileContext, fileName)
+		require.Equal(t, actualContext, expectedFileContext, expectedFileName)
 	}
 }
 
