@@ -220,12 +220,17 @@ func TestFileByFormatHandlerV2(t *testing.T) {
 	require.NoError(t, err)
 	defer func(path string) { require.NoError(t, os.RemoveAll(path)) }(tmpFolder)
 
-	expectedDataset := map[string][]string{
-		"ignored.01.log": {"f1:i0001", "f1:i0002"},
-		"ignored.02.log": {"f2:i0001", "f2:i0002"},
-		"2000-01-03.log": {"f3:i0001", "f3:i0002"},
-		"2000-01-04.log": {"f4:i0001", "f4:i0002"},
-		"2000-01-05.log": {"f5:i0001", "f5:i0002"},
+	dataset := []string{
+		"f1:i0001", "f1:i0002",
+		"f2:i0001", "f2:i0002",
+		"f3:i0001", "f3:i0002",
+		"f4:i0001", "f4:i0002",
+		"f5:i0001", "f5:i0002",
+	}
+	expectedDataset := map[string]string{
+		"2000-01-03.log": "f3:i0001\nf3:i0002\n",
+		"2000-01-04.log": "f4:i0001\nf4:i0002\n",
+		"2000-01-05.log": "f5:i0001\nf5:i0002\n",
 	}
 
 	fileIndexMutex := sync.Mutex{}
@@ -238,22 +243,19 @@ func TestFileByFormatHandlerV2(t *testing.T) {
 		return d.Format(time.DateOnly)
 	})
 
-	for _, d := range expectedDataset {
-		for _, fileContext := range d {
-			_, err = handler.Write([]byte(fileContext))
-			require.NoError(t, err)
-		}
+	for _, d := range dataset {
+		_, err = handler.Write([]byte(d))
+		require.NoError(t, err)
 	}
 
 	files, err := extractFilesOrFail(tmpFolder)
 	require.NoError(t, err)
 	require.Len(t, files, 3, "incorrect files count")
-	for fileName, d := range expectedDataset {
+	for fileName, expectedFileContext := range expectedDataset {
 		if strings.HasPrefix(fileName, "ignored") {
 			continue
 		}
 		actualData, fExists := files[fileName]
-		expectedFileContext := strings.Join(d, "\n") + "\n"
 		require.True(t, fExists, fileName)
 		require.Equal(t, expectedFileContext, actualData, fileName)
 	}
@@ -265,7 +267,9 @@ func TestFileByFormatHandlerForRaceCondition(t *testing.T) {
 	require.NoError(t, err)
 	defer func(path string) { _ = os.RemoveAll(path) }(tmpFolder)
 
-	handler := FileByFormatHandler(tmpFolder, 1, func() string { return "2000-01-10" })
+	handlerFileName := "2000-01-10"
+	handler := FileByFormatHandler(tmpFolder, 1, func() string { return handlerFileName })
+
 	expectedFileContexts := make([]string, 100)
 	for i := range expectedFileContexts {
 		expectedFileContexts[i] = strconv.Itoa(i) + ":" + uuid.NewV4().String()
@@ -285,11 +289,13 @@ func TestFileByFormatHandlerForRaceCondition(t *testing.T) {
 	files, err := extractFilesOrFail(tmpFolder)
 	require.NoError(t, err)
 	require.Len(t, files, 1, "incorrect files count")
-	// I know that nested loops are not ideal, but in this case, the first loop consists of only one element
-	for _, fileContext := range files {
-		for _, expectedContext := range expectedFileContexts {
-			require.Contains(t, fileContext, expectedContext)
-		}
+
+	fileContext, ok := files[handlerFileName+".log"]
+	require.True(t, ok)
+	require.NotEmpty(t, fileContext)
+
+	for _, expectedContext := range expectedFileContexts {
+		require.Contains(t, fileContext, expectedContext)
 	}
 }
 
@@ -327,6 +333,11 @@ func extractFilesOrFail(folder string) (map[string]string, error) {
 	r := make(map[string]string, 0)
 	for _, filePath := range files {
 		b, e := os.ReadFile(filePath)
+		if runtime.GOOS == "windows" && strings.Contains(filePath, "\\") {
+			// in some cases the filepath library is not able to handle the backslashes correctly
+			// so we need to replace them with forward slashes
+			filePath = strings.ReplaceAll(filePath, "\\", "/")
+		}
 		filePath = path.Base(filePath)
 		if e != nil {
 			r[filePath] = e.Error()
@@ -341,7 +352,9 @@ func extractFilesOrFail(folder string) (map[string]string, error) {
 // IMPORTANT: os.TempDir is not supported on Windows, because it returns the path with backslashes.
 func crossPlatformTmpDir() string {
 	tmpFolder := os.TempDir()
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" && strings.Contains(tmpFolder, "\\") {
+		// in some cases the filepath library is not able to handle the backslashes correctly
+		// so we need to replace them with forward slashes
 		tmpFolder = strings.ReplaceAll(tmpFolder, "\\", "/")
 	}
 	return tmpFolder
