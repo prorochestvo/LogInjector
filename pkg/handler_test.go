@@ -205,7 +205,6 @@ func TestFileByFormatHandler(t *testing.T) {
 	}
 }
 
-// TODO: REVIEW: example how it can be done
 func TestFileByFormatHandlerV2(t *testing.T) {
 	startedAt := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 
