@@ -12,6 +12,8 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -34,7 +36,7 @@ func TestTelegramHandler(t *testing.T) {
 }
 
 func TestCyclicOverwritingFilesHandler(t *testing.T) {
-	tmpFolder := path.Join(os.TempDir(), fmt.Sprintf("log-%d", rand.Uint64()))
+	tmpFolder := path.Join(crossPlatformTmpDir(), fmt.Sprintf("log-%d", rand.Uint64()))
 	err := os.MkdirAll(tmpFolder, os.ModePerm)
 	require.NoError(t, err)
 	defer func(path string) { _ = os.RemoveAll(path) }(tmpFolder)
@@ -116,7 +118,7 @@ func TestReinitCyclicOverwritingFilesHandler(t *testing.T) {
 }
 
 func TestCyclicOverwritingFilesHandlerForRaceCondition(t *testing.T) {
-	tmpFolder := path.Join(os.TempDir(), fmt.Sprintf("log-%d", rand.Uint64()))
+	tmpFolder := path.Join(crossPlatformTmpDir(), fmt.Sprintf("log-%d", rand.Uint64()))
 	err := os.MkdirAll(tmpFolder, os.ModePerm)
 	require.NoError(t, err)
 	defer func(path string) { _ = os.RemoveAll(path) }(tmpFolder)
@@ -157,25 +159,141 @@ func TestCyclicOverwritingFilesHandlerForRaceCondition(t *testing.T) {
 }
 
 func TestFileByFormatHandler(t *testing.T) {
+	tmpFolder := path.Join(crossPlatformTmpDir(), fmt.Sprintf("log-%d", rand.Uint64()))
+	err := os.MkdirAll(tmpFolder, os.ModePerm)
+	require.NoError(t, err)
+	defer func(path string) { _ = os.RemoveAll(path) }(tmpFolder)
+
 	m := sync.Mutex{}
-	fileNumber := 0
+	fileNumber := -1
 	fileNameGenerator := func() string {
+		startingDay := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 		m.Lock()
 		defer m.Unlock()
 		fileNumber++
-		return time.Date(2000, 1, fileNumber, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
+		return startingDay.AddDate(0, 0, fileNumber).Format("2006-01-02")
 	}
-	FileByFormatHandler("test", 10, fileNameGenerator)
-	t.Skipf("test not implemented")
+	handler := FileByFormatHandler(tmpFolder, 4, fileNameGenerator)
+	expectedFileContexts := []string{
+		"f1:i0001", "f2:i0001",
+		"f3:i0001", "f4:i0001",
+		"f5:i0001", "f6:i0001",
+		"f7:i0001", "f8:i0001",
+		"f9:i0001", "f0:i0001",
+	}
+
+	for _, fileContext := range expectedFileContexts {
+		_, err = handler.Write([]byte(fileContext))
+		require.NoError(t, err)
+	}
+
+	expectedDataset := map[string]string{
+		"2000-01-10.log": "f0:i0001\n",
+		"2000-01-09.log": "f9:i0001\n",
+		"2000-01-08.log": "f8:i0001\n",
+		"2000-01-07.log": "f7:i0001\n",
+	}
+
+	files, err := extractFilesOrFail(tmpFolder)
+	require.NoError(t, err)
+	require.Len(t, files, 4, "incorrect files count")
+
+	for expectedFileName, expectedFileContext := range expectedDataset {
+		actualContext, exists := files[expectedFileName]
+		require.True(t, exists)
+		require.Equal(t, actualContext, expectedFileContext, expectedFileName)
+	}
 }
 
-func TestFilePerDaysHandlerForRaceCondition(t *testing.T) {
-	// TODO: Implement
-	t.Skipf("test not implemented")
+func TestFileByFormatHandlerV2(t *testing.T) {
+	startedAt := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	tmpFolder := path.Join(crossPlatformTmpDir(), fmt.Sprintf("log-%d", rand.Uint64()))
+	err := os.MkdirAll(tmpFolder, os.ModePerm)
+	require.NoError(t, err)
+	defer func(path string) { require.NoError(t, os.RemoveAll(path)) }(tmpFolder)
+
+	dataset := []string{
+		"f1:i0001", "f1:i0002",
+		"f2:i0001", "f2:i0002",
+		"f3:i0001", "f3:i0002",
+		"f4:i0001", "f4:i0002",
+		"f5:i0001", "f5:i0002",
+	}
+	expectedDataset := map[string]string{
+		"2000-01-03.log": "f3:i0001\nf3:i0002\n",
+		"2000-01-04.log": "f4:i0001\nf4:i0002\n",
+		"2000-01-05.log": "f5:i0001\nf5:i0002\n",
+	}
+
+	fileIndexMutex := sync.Mutex{}
+	fileIndex := 0
+	handler := FileByFormatHandler(tmpFolder, 3, func() string {
+		fileIndexMutex.Lock()
+		defer fileIndexMutex.Unlock()
+		d := startedAt.Add(time.Hour * 24 * time.Duration(fileIndex>>1))
+		fileIndex++
+		return d.Format(time.DateOnly)
+	})
+
+	for _, d := range dataset {
+		_, err = handler.Write([]byte(d))
+		require.NoError(t, err)
+	}
+
+	files, err := extractFilesOrFail(tmpFolder)
+	require.NoError(t, err)
+	require.Len(t, files, 3, "incorrect files count")
+	for fileName, expectedFileContext := range expectedDataset {
+		if strings.HasPrefix(fileName, "ignored") {
+			continue
+		}
+		actualData, fExists := files[fileName]
+		require.True(t, fExists, fileName)
+		require.Equal(t, expectedFileContext, actualData, fileName)
+	}
+}
+
+func TestFileByFormatHandlerForRaceCondition(t *testing.T) {
+	tmpFolder := path.Join(crossPlatformTmpDir(), fmt.Sprintf("log-%d", rand.Uint64()))
+	err := os.MkdirAll(tmpFolder, os.ModePerm)
+	require.NoError(t, err)
+	defer func(path string) { _ = os.RemoveAll(path) }(tmpFolder)
+
+	handlerFileName := "2000-01-10"
+	handler := FileByFormatHandler(tmpFolder, 1, func() string { return handlerFileName })
+
+	expectedFileContexts := make([]string, 100)
+	for i := range expectedFileContexts {
+		expectedFileContexts[i] = strconv.Itoa(i) + ":" + uuid.NewV4().String()
+	}
+
+	var wg sync.WaitGroup
+	for _, fileContext := range expectedFileContexts {
+		wg.Add(1)
+		go func(w io.Writer) {
+			defer wg.Done()
+			_, err = w.Write([]byte(fileContext))
+			require.NoError(t, err)
+		}(handler)
+	}
+	wg.Wait() // waiting when all jobs will be done
+
+	files, err := extractFilesOrFail(tmpFolder)
+	require.NoError(t, err)
+	require.Len(t, files, 1, "incorrect files count")
+
+	fileContext, ok := files[handlerFileName+".log"]
+	require.True(t, ok)
+	require.NotEmpty(t, fileContext)
+
+	for _, expectedContext := range expectedFileContexts {
+		require.Contains(t, fileContext, expectedContext)
+	}
 }
 
 func TestVerifyFiles(t *testing.T) {
-	tmpFolder := path.Join(os.TempDir(), fmt.Sprintf("log-%d", rand.Uint64()))
+	tmpFolder := path.Join(crossPlatformTmpDir(), fmt.Sprintf("log-%d", rand.Uint64()))
 	err := os.MkdirAll(tmpFolder, os.ModePerm)
 	require.NoError(t, err)
 	defer func(path string) { _ = os.RemoveAll(path) }(tmpFolder)
@@ -208,7 +326,12 @@ func extractFilesOrFail(folder string) (map[string]string, error) {
 	r := make(map[string]string, 0)
 	for _, filePath := range files {
 		b, e := os.ReadFile(filePath)
-		_, filePath = path.Split(filePath)
+		if runtime.GOOS == "windows" && strings.Contains(filePath, "\\") {
+			// in some cases the filepath library is not able to handle the backslashes correctly
+			// so we need to replace them with forward slashes
+			filePath = strings.ReplaceAll(filePath, "\\", "/")
+		}
+		filePath = path.Base(filePath)
 		if e != nil {
 			r[filePath] = e.Error()
 		} else {
@@ -216,4 +339,16 @@ func extractFilesOrFail(folder string) (map[string]string, error) {
 		}
 	}
 	return r, nil
+}
+
+// crossPlatformTmpDir returns the temporary directory path with the correct path separator.
+// IMPORTANT: os.TempDir is not supported on Windows, because it returns the path with backslashes.
+func crossPlatformTmpDir() string {
+	tmpFolder := os.TempDir()
+	if runtime.GOOS == "windows" && strings.Contains(tmpFolder, "\\") {
+		// in some cases the filepath library is not able to handle the backslashes correctly
+		// so we need to replace them with forward slashes
+		tmpFolder = strings.ReplaceAll(tmpFolder, "\\", "/")
+	}
+	return tmpFolder
 }
