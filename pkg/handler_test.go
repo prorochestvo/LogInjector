@@ -318,24 +318,37 @@ func TestVerifyFiles(t *testing.T) {
 	require.Len(t, files, 3, "incorrect files count")
 }
 
+// TODO: REVIEW: looks like, it works well, so I suggest to remove this method and provide this approach to each unit test in this repository.
+// TODO: REVIEW: that is i guess we can to reduce the code like this:
+// TODO: REVIEW:
+// TODO: REVIEW: REMOVE:        tmpFolder := path.Join(crossPlatformTmpDir(), fmt.Sprintf("log-%d", rand.Uint64()))
+// TODO: REVIEW: REMOVE:        err := os.MkdirAll(tmpFolder, os.ModePerm)
+// TODO: REVIEW: REMOVE:        require.NoError(t, err)
+// TODO: REVIEW: REMOVE:        defer func(path string) { _ = os.RemoveAll(path) }(tmpFolder)
+// TODO: REVIEW:
+// TODO: REVIEW: APPEND:        tmpFolder := t.TempDir()
 func TestTempDir(t *testing.T) {
-	// Creating a temporary directory
+	const n = "go_ahead.log"
+	var s = uuid.NewV4().String()
+
+	// make tmp dir
 	tmpFolder := t.TempDir()
-	// Creating three files in the directory
-	for i := 0; i < 3; i++ {
-		err := os.WriteFile(path.Join(tmpFolder, fmt.Sprintf("%d.%s", rand.Int31(), defaultFileExtension)), []byte("-"), os.ModePerm)
-		require.NoError(t, err)
+	if _, err := os.Stat(tmpFolder); os.IsNotExist(err) {
+		t.Fatalf("directory %s does not exist", tmpFolder)
 	}
-	//Directory still exist
-	_, err := os.Stat(tmpFolder)
-	fmt.Print(tmpFolder)
-	fmt.Print(err)
-	if os.IsNotExist(err) {
-		return
+	t.Log("temp folder:", tmpFolder)
+
+	// create new file
+	f := path.Join(tmpFolder, n)
+	require.NoError(t, os.WriteFile(f, []byte(s), os.ModePerm))
+	if _, err := os.Stat(f); os.IsNotExist(err) {
+		t.Fatalf("directory %s does not exist", tmpFolder)
 	}
-	//Extract files from directory
-	files, err := extractFilesOrFail(tmpFolder)
-	fmt.Print(files)
+
+	fData, err := os.ReadFile(f)
+	require.NoError(t, err)
+	require.NotNil(t, fData)
+	require.Equal(t, s, string(fData))
 }
 
 func extractFilesOrFail(folder string) (map[string]string, error) {
