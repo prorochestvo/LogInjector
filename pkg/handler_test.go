@@ -113,12 +113,12 @@ func TestCyclicOverwritingFilesHandler(t *testing.T) {
 }
 
 func TestReinitCyclicOverwritingFilesHandler(t *testing.T) {
-	// TODO: Implement reinit last file state after restart\recreate handler
 	tmpFolder := path.Join(crossPlatformTmpDir(), fmt.Sprintf("log-%d", rand.Uint64()))
 	err := os.MkdirAll(tmpFolder, os.ModePerm)
 	require.NoError(t, err)
-	defer func(path string) { _ = os.RemoveAll(path) }(tmpFolder)
+	defer func(path string) { require.NoError(t, os.RemoveAll(path)) }(tmpFolder)
 
+	// TODO: REVIEW: could you use another word instead of "err"?
 	h := CyclicOverwritingFilesHandler(tmpFolder, "err", 3, 3)
 	_, err = h.Write(bytes.Repeat([]byte("1"), 3))
 	require.NoError(t, err)
@@ -147,7 +147,7 @@ func TestReinitCyclicOverwritingFilesHandler(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, files, 3, "incorrect files count")
 	f, ok = files["err.00000001."+defaultFileExtension]
-	require.Equal(t, false, ok, "file context not found")
+	require.Equal(t, false, ok, "file context not found") // TODO: REVIEW: can we refuse the description of option like this `file context not found`, that if, it does not bring any additional information?
 	f, ok = files["err.00000002."+defaultFileExtension]
 	require.Equal(t, true, ok, "file context not found")
 	require.Equal(t, "222\n", f, "incorrect file context")
@@ -157,7 +157,6 @@ func TestReinitCyclicOverwritingFilesHandler(t *testing.T) {
 	f, ok = files["err.00000004."+defaultFileExtension]
 	require.Equal(t, true, ok, "file context not found")
 	require.Equal(t, "444\n", f, "incorrect file context")
-
 }
 
 func TestCyclicOverwritingFilesHandlerForRaceCondition(t *testing.T) {
