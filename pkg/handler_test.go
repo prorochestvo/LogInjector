@@ -318,6 +318,26 @@ func TestVerifyFiles(t *testing.T) {
 	require.Len(t, files, 3, "incorrect files count")
 }
 
+func TestTempDir(t *testing.T) {
+	// Creating a temporary directory
+	tmpFolder := t.TempDir()
+	// Creating three files in the directory
+	for i := 0; i < 3; i++ {
+		err := os.WriteFile(path.Join(tmpFolder, fmt.Sprintf("%d.%s", rand.Int31(), defaultFileExtension)), []byte("-"), os.ModePerm)
+		require.NoError(t, err)
+	}
+	//Directory still exist
+	_, err := os.Stat(tmpFolder)
+	fmt.Print(tmpFolder)
+	fmt.Print(err)
+	if os.IsNotExist(err) {
+		return
+	}
+	//Extract files from directory
+	files, err := extractFilesOrFail(tmpFolder)
+	fmt.Print(files)
+}
+
 func extractFilesOrFail(folder string) (map[string]string, error) {
 	files, err := filepath.Glob(path.Join(folder, "*."+defaultFileExtension))
 	if err != nil || len(files) == 0 {
