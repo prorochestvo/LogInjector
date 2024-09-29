@@ -36,7 +36,7 @@ func TestTelegramHandler(t *testing.T) {
 }
 
 func TestCyclicOverwritingFilesHandler(t *testing.T) {
-	tmpFolder := os.TempDir()
+	tmpFolder := t.TempDir()
 
 	h := CyclicOverwritingFilesHandler(tmpFolder, "err", 7, 3)
 
@@ -110,7 +110,7 @@ func TestCyclicOverwritingFilesHandler(t *testing.T) {
 }
 
 func TestReinitCyclicOverwritingFilesHandler(t *testing.T) {
-	tmpFolder := os.TempDir()
+	tmpFolder := t.TempDir()
 
 	h := CyclicOverwritingFilesHandler(tmpFolder, "err", 3, 3)
 	_, err := h.Write(bytes.Repeat([]byte("1"), 3))
@@ -154,7 +154,7 @@ func TestReinitCyclicOverwritingFilesHandler(t *testing.T) {
 }
 
 func TestCyclicOverwritingFilesHandlerForRaceCondition(t *testing.T) {
-	tmpFolder := os.TempDir()
+	tmpFolder := t.TempDir()
 
 	h := CyclicOverwritingFilesHandler(tmpFolder, "err", 70, 10)
 	messages := make([]string, 0)
@@ -192,7 +192,7 @@ func TestCyclicOverwritingFilesHandlerForRaceCondition(t *testing.T) {
 }
 
 func TestFileByFormatHandler(t *testing.T) {
-	tmpFolder := os.TempDir()
+	tmpFolder := t.TempDir()
 
 	m := sync.Mutex{}
 	fileNumber := -1
@@ -237,7 +237,7 @@ func TestFileByFormatHandler(t *testing.T) {
 
 func TestFileByFormatHandlerV2(t *testing.T) {
 	startedAt := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	tmpFolder := os.TempDir()
+	tmpFolder := t.TempDir()
 
 	dataset := []string{
 		"f1:i0001", "f1:i0002",
@@ -281,7 +281,7 @@ func TestFileByFormatHandlerV2(t *testing.T) {
 }
 
 func TestFileByFormatHandlerForRaceCondition(t *testing.T) {
-	tmpFolder := os.TempDir()
+	tmpFolder := t.TempDir()
 
 	handlerFileName := "2000-01-10"
 	handler := FileByFormatHandler(tmpFolder, 1, func() string { return handlerFileName })
@@ -316,7 +316,7 @@ func TestFileByFormatHandlerForRaceCondition(t *testing.T) {
 }
 
 func TestVerifyFiles(t *testing.T) {
-	tmpFolder := os.TempDir()
+	tmpFolder := t.TempDir()
 
 	err := verifyFiles(tmpFolder, 3)
 	require.NoError(t, err)
