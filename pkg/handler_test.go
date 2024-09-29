@@ -36,14 +36,10 @@ func TestTelegramHandler(t *testing.T) {
 }
 
 func TestCyclicOverwritingFilesHandler(t *testing.T) {
-	tmpFolder := path.Join(crossPlatformTmpDir(), fmt.Sprintf("log-%d", rand.Uint64()))
-	err := os.MkdirAll(tmpFolder, os.ModePerm)
-	require.NoError(t, err)
-	defer func(path string) { _ = os.RemoveAll(path) }(tmpFolder)
-
+	tmpFolder := t.TempDir()
 	h := CyclicOverwritingFilesHandler(tmpFolder, "err", 7, 3)
 
-	_, err = h.Write(bytes.Repeat([]byte("1"), 2))
+	_, err := h.Write(bytes.Repeat([]byte("1"), 2))
 	require.NoError(t, err)
 	files, err := extractFilesOrFail(tmpFolder)
 	require.NoError(t, err)
@@ -161,17 +157,13 @@ func TestReinitCyclicOverwritingFilesHandler(t *testing.T) {
 }
 
 func TestCyclicOverwritingFilesHandlerForRaceCondition(t *testing.T) {
-	tmpFolder := path.Join(crossPlatformTmpDir(), fmt.Sprintf("log-%d", rand.Uint64()))
-	err := os.MkdirAll(tmpFolder, os.ModePerm)
-	require.NoError(t, err)
-	defer func(path string) { _ = os.RemoveAll(path) }(tmpFolder)
-
+	tmpFolder := t.TempDir()
 	h := CyclicOverwritingFilesHandler(tmpFolder, "err", 70, 10)
 	messages := make([]string, 0)
 	for i := 0; i < 16; i++ {
 		messages = append(messages, fmt.Sprintf("%0.3d->>%s", i, uuid.NewV4().String()))
 	}
-
+	var err error
 	wg := sync.WaitGroup{}
 	for _, m := range messages {
 		wg.Add(1)
@@ -202,10 +194,7 @@ func TestCyclicOverwritingFilesHandlerForRaceCondition(t *testing.T) {
 }
 
 func TestFileByFormatHandler(t *testing.T) {
-	tmpFolder := path.Join(crossPlatformTmpDir(), fmt.Sprintf("log-%d", rand.Uint64()))
-	err := os.MkdirAll(tmpFolder, os.ModePerm)
-	require.NoError(t, err)
-	defer func(path string) { _ = os.RemoveAll(path) }(tmpFolder)
+	tmpFolder := t.TempDir()
 
 	m := sync.Mutex{}
 	fileNumber := -1
@@ -226,7 +215,7 @@ func TestFileByFormatHandler(t *testing.T) {
 	}
 
 	for _, fileContext := range expectedFileContexts {
-		_, err = handler.Write([]byte(fileContext))
+		_, err := handler.Write([]byte(fileContext))
 		require.NoError(t, err)
 	}
 
@@ -250,11 +239,7 @@ func TestFileByFormatHandler(t *testing.T) {
 
 func TestFileByFormatHandlerV2(t *testing.T) {
 	startedAt := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	tmpFolder := path.Join(crossPlatformTmpDir(), fmt.Sprintf("log-%d", rand.Uint64()))
-	err := os.MkdirAll(tmpFolder, os.ModePerm)
-	require.NoError(t, err)
-	defer func(path string) { require.NoError(t, os.RemoveAll(path)) }(tmpFolder)
+	tmpFolder := t.TempDir()
 
 	dataset := []string{
 		"f1:i0001", "f1:i0002",
@@ -280,7 +265,7 @@ func TestFileByFormatHandlerV2(t *testing.T) {
 	})
 
 	for _, d := range dataset {
-		_, err = handler.Write([]byte(d))
+		_, err := handler.Write([]byte(d))
 		require.NoError(t, err)
 	}
 
@@ -298,10 +283,7 @@ func TestFileByFormatHandlerV2(t *testing.T) {
 }
 
 func TestFileByFormatHandlerForRaceCondition(t *testing.T) {
-	tmpFolder := path.Join(crossPlatformTmpDir(), fmt.Sprintf("log-%d", rand.Uint64()))
-	err := os.MkdirAll(tmpFolder, os.ModePerm)
-	require.NoError(t, err)
-	defer func(path string) { _ = os.RemoveAll(path) }(tmpFolder)
+	tmpFolder := t.TempDir()
 
 	handlerFileName := "2000-01-10"
 	handler := FileByFormatHandler(tmpFolder, 1, func() string { return handlerFileName })
@@ -316,7 +298,7 @@ func TestFileByFormatHandlerForRaceCondition(t *testing.T) {
 		wg.Add(1)
 		go func(w io.Writer) {
 			defer wg.Done()
-			_, err = w.Write([]byte(fileContext))
+			_, err := w.Write([]byte(fileContext))
 			require.NoError(t, err)
 		}(handler)
 	}
@@ -336,12 +318,9 @@ func TestFileByFormatHandlerForRaceCondition(t *testing.T) {
 }
 
 func TestVerifyFiles(t *testing.T) {
-	tmpFolder := path.Join(crossPlatformTmpDir(), fmt.Sprintf("log-%d", rand.Uint64()))
-	err := os.MkdirAll(tmpFolder, os.ModePerm)
-	require.NoError(t, err)
-	defer func(path string) { _ = os.RemoveAll(path) }(tmpFolder)
+	tmpFolder := t.TempDir()
 
-	err = verifyFiles(tmpFolder, 3)
+	err := verifyFiles(tmpFolder, 3)
 	require.NoError(t, err)
 
 	files, err := extractFilesOrFail(tmpFolder)
@@ -382,16 +361,4 @@ func extractFilesOrFail(folder string) (map[string]string, error) {
 		}
 	}
 	return r, nil
-}
-
-// crossPlatformTmpDir returns the temporary directory path with the correct path separator.
-// IMPORTANT: os.TempDir is not supported on Windows, because it returns the path with backslashes.
-func crossPlatformTmpDir() string {
-	tmpFolder := os.TempDir()
-	if runtime.GOOS == "windows" && strings.Contains(tmpFolder, "\\") {
-		// in some cases the filepath library is not able to handle the backslashes correctly
-		// so we need to replace them with forward slashes
-		tmpFolder = strings.ReplaceAll(tmpFolder, "\\", "/")
-	}
-	return tmpFolder
 }
