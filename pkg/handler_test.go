@@ -115,13 +115,12 @@ func TestReinitCyclicOverwritingFilesHandler(t *testing.T) {
 
 func TestCyclicOverwritingFilesHandlerForRaceCondition(t *testing.T) {
 	tmpFolder := t.TempDir()
-	_, err := os.Stat(tmpFolder) // TODO: REVIEW: this row is needless, so could you remove it
 	h := CyclicOverwritingFilesHandler(tmpFolder, "err", 70, 10)
 	messages := make([]string, 0)
 	for i := 0; i < 16; i++ {
 		messages = append(messages, fmt.Sprintf("%0.3d->>%s", i, uuid.NewV4().String()))
 	}
-
+	var err error
 	wg := sync.WaitGroup{}
 	for _, m := range messages {
 		wg.Add(1)
@@ -298,31 +297,6 @@ func TestVerifyFiles(t *testing.T) {
 	require.Len(t, files, 3, "incorrect files count")
 }
 
-// TODO: REVIEW: this method is needless, could you remove it
-func TestTempDir(t *testing.T) {
-	const n = "go_ahead.log"
-	var s = uuid.NewV4().String()
-
-	// make tmp dir
-	tmpFolder := t.TempDir()
-	if _, err := os.Stat(tmpFolder); os.IsNotExist(err) {
-		t.Fatalf("directory %s does not exist", tmpFolder)
-	}
-	t.Log("temp folder:", tmpFolder)
-
-	// create new file
-	f := path.Join(tmpFolder, n)
-	require.NoError(t, os.WriteFile(f, []byte(s), os.ModePerm))
-	if _, err := os.Stat(f); os.IsNotExist(err) {
-		t.Fatalf("directory %s does not exist", tmpFolder)
-	}
-
-	fData, err := os.ReadFile(f)
-	require.NoError(t, err)
-	require.NotNil(t, fData)
-	require.Equal(t, s, string(fData))
-}
-
 func extractFilesOrFail(folder string) (map[string]string, error) {
 	files, err := filepath.Glob(path.Join(folder, "*."+defaultFileExtension))
 	if err != nil || len(files) == 0 {
@@ -344,17 +318,4 @@ func extractFilesOrFail(folder string) (map[string]string, error) {
 		}
 	}
 	return r, nil
-}
-
-// TODO: REVIEW: this method is needless, could you remove it
-// crossPlatformTmpDir returns the temporary directory path with the correct path separator.
-// IMPORTANT: os.TempDir is not supported on Windows, because it returns the path with backslashes.
-func crossPlatformTmpDir() string {
-	tmpFolder := os.TempDir()
-	if runtime.GOOS == "windows" && strings.Contains(tmpFolder, "\\") {
-		// in some cases the filepath library is not able to handle the backslashes correctly
-		// so we need to replace them with forward slashes
-		tmpFolder = strings.ReplaceAll(tmpFolder, "\\", "/")
-	}
-	return tmpFolder
 }
