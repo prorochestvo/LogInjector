@@ -37,6 +37,7 @@ func TestTelegramHandler(t *testing.T) {
 
 func TestCyclicOverwritingFilesHandler(t *testing.T) {
 	tmpFolder := t.TempDir()
+
 	h := CyclicOverwritingFilesHandler(tmpFolder, "err", 7, 3)
 
 	_, err := h.Write(bytes.Repeat([]byte("1"), 2))
@@ -109,12 +110,52 @@ func TestCyclicOverwritingFilesHandler(t *testing.T) {
 }
 
 func TestReinitCyclicOverwritingFilesHandler(t *testing.T) {
-	// TODO: Implement reinit last file state after restart\recreate handler
-	t.Skipf("test not implemented")
+	tmpFolder := t.TempDir()
+
+	h := CyclicOverwritingFilesHandler(tmpFolder, "err", 3, 3)
+	_, err := h.Write(bytes.Repeat([]byte("1"), 3))
+	require.NoError(t, err)
+	_, err = h.Write(bytes.Repeat([]byte("2"), 3))
+	require.NoError(t, err)
+	_, err = h.Write(bytes.Repeat([]byte("3"), 3))
+	require.NoError(t, err)
+
+	files, err := extractFilesOrFail(tmpFolder)
+	require.NoError(t, err)
+	require.Len(t, files, 3, "incorrect files count")
+	f, ok := files["err.00000001."+defaultFileExtension]
+	require.Equal(t, true, ok, "file context not found")
+	require.Equal(t, "111\n", f, "incorrect file context")
+	f, ok = files["err.00000002."+defaultFileExtension]
+	require.Equal(t, true, ok, "file context not found")
+	require.Equal(t, "222\n", f, "incorrect file context")
+	f, ok = files["err.00000003."+defaultFileExtension]
+	require.Equal(t, true, ok, "file context not found")
+	require.Equal(t, "333\n", f, "incorrect file context")
+
+	_, err = h.Write(bytes.Repeat([]byte("4"), 3))
+	require.NoError(t, err)
+
+	files, err = extractFilesOrFail(tmpFolder)
+	require.NoError(t, err)
+	require.Len(t, files, 3, "incorrect files count")
+	f, ok = files["err.00000001."+defaultFileExtension]
+	require.Equal(t, false, ok, "file context not found")
+	f, ok = files["err.00000002."+defaultFileExtension]
+	require.Equal(t, true, ok, "file context not found")
+	require.Equal(t, "222\n", f, "incorrect file context")
+	f, ok = files["err.00000003."+defaultFileExtension]
+	require.Equal(t, true, ok, "file context not found")
+	require.Equal(t, "333\n", f, "incorrect file context")
+	f, ok = files["err.00000004."+defaultFileExtension]
+	require.Equal(t, true, ok, "file context not found")
+	require.Equal(t, "444\n", f, "incorrect file context")
+
 }
 
 func TestCyclicOverwritingFilesHandlerForRaceCondition(t *testing.T) {
 	tmpFolder := t.TempDir()
+
 	h := CyclicOverwritingFilesHandler(tmpFolder, "err", 70, 10)
 	messages := make([]string, 0)
 	for i := 0; i < 16; i++ {
