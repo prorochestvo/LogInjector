@@ -115,7 +115,7 @@ func TestReinitCyclicOverwritingFilesHandler(t *testing.T) {
 
 func TestCyclicOverwritingFilesHandlerForRaceCondition(t *testing.T) {
 	tmpFolder := t.TempDir()
-	_, err := os.Stat(tmpFolder)
+	_, err := os.Stat(tmpFolder) // TODO: REVIEW: this row is needless, so could you remove it
 	h := CyclicOverwritingFilesHandler(tmpFolder, "err", 70, 10)
 	messages := make([]string, 0)
 	for i := 0; i < 16; i++ {
@@ -298,15 +298,7 @@ func TestVerifyFiles(t *testing.T) {
 	require.Len(t, files, 3, "incorrect files count")
 }
 
-// TODO: REVIEW: looks like, it works well, so I suggest to remove this method and provide this approach to each unit test in this repository.
-// TODO: REVIEW: that is i guess we can to reduce the code like this:
-// TODO: REVIEW:
-// TODO: REVIEW: REMOVE:        tmpFolder := path.Join(crossPlatformTmpDir(), fmt.Sprintf("log-%d", rand.Uint64()))
-// TODO: REVIEW: REMOVE:        err := os.MkdirAll(tmpFolder, os.ModePerm)
-// TODO: REVIEW: REMOVE:        require.NoError(t, err)
-// TODO: REVIEW: REMOVE:        defer func(path string) { _ = os.RemoveAll(path) }(tmpFolder)
-// TODO: REVIEW:
-// TODO: REVIEW: APPEND:        tmpFolder := t.TempDir()
+// TODO: REVIEW: this method is needless, could you remove it
 func TestTempDir(t *testing.T) {
 	const n = "go_ahead.log"
 	var s = uuid.NewV4().String()
@@ -354,6 +346,7 @@ func extractFilesOrFail(folder string) (map[string]string, error) {
 	return r, nil
 }
 
+// TODO: REVIEW: this method is needless, could you remove it
 // crossPlatformTmpDir returns the temporary directory path with the correct path separator.
 // IMPORTANT: os.TempDir is not supported on Windows, because it returns the path with backslashes.
 func crossPlatformTmpDir() string {
