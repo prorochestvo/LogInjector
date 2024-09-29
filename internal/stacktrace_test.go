@@ -7,10 +7,10 @@ import (
 
 func TestExtractMethodTrace(t *testing.T) {
 	m := LineTrace()
-	require.Contains(t, "testing/testing.go:", m)
-	require.Contains(t, "tRunner", m)
+	require.Contains(t, m, "testing/testing.go:")
+	require.Contains(t, m, "tRunner")
 
 	m = LineTrace()
-	require.Contains(t, "testing/testing.go:", m)
-	require.Contains(t, "tRunner", m)
+	require.Contains(t, m, "testing/testing.go:")
+	require.Contains(t, m, "tRunner")
 }
