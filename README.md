@@ -30,7 +30,7 @@ package main
 
 import (
 	"bytes"
-	"github.com/prorochestvo/loginjector/pkg"
+	"github.com/prorochestvo/loginjector"
 )
 
 const (
