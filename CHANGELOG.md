@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-07-18
+
+### Changed
+
+- `internal.StackTrace()` now calls `runtime.Stack` directly with an 8 KiB initial
+  buffer (doubling only if a deeper stack does not fit, capped at 4 MiB) instead of
+  `debug.Stack`, which starts at 1 KiB and doubles. This is roughly 3× faster on deep
+  (production-depth) stacks, with byte-identical output and no public API change.
+
 ## [1.0.6] - 2026-07-18
 
 ### **BREAKING CHANGES**
@@ -189,5 +198,6 @@ no two-version deprecation window.
   deterministic and respects the configured `maxFilesInFolder` regardless of process
   restart timing.
 
-[Unreleased]: https://github.com/prorochestvo/loginjector/compare/v1.0.6...HEAD
+[Unreleased]: https://github.com/prorochestvo/loginjector/compare/v1.0.7...HEAD
+[1.0.7]: https://github.com/prorochestvo/loginjector/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/prorochestvo/loginjector/compare/v1.0.5...v1.0.6

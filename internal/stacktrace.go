@@ -3,27 +3,54 @@ package internal
 import (
 	"path"
 	"runtime"
-	"runtime/debug"
 	"strconv"
 	"strings"
 )
 
-// StackTrace returns the full goroutine stack as a trimmed string via debug.Stack.
-// It is intentionally kept on debug.Stack rather than reimplemented via
-// runtime.Callers+CallersFrames: callers want the full multiline goroutine dump,
-// the path is not hot (called only at error-construction time on failure paths),
-// and the existing test assertions pin the multiline, human-readable format
-// produced by debug.Stack — reformatting would break them for negligible gain.
+// StackTrace returns the full, trimmed goroutine stack dump for the calling
+// goroutine: the goroutine header, every call frame, argument words, and the
+// goroutine state. This is the EXPENSIVE trace path — reserve it for places
+// where you must investigate deeply, such as panic recovery. It is a cold,
+// failure-path call, not something to attach to every error; use LineTrace for
+// ubiquitous per-error context.
+//
+// The output is byte-identical to strings.TrimSpace(string(debug.Stack())): it
+// calls runtime.Stack directly with an 8 KiB initial buffer, doubling only if a
+// deeper stack does not fit, which avoids debug.Stack's 1 KiB-and-double
+// repeated runtime.Stack re-walks on production-depth stacks. The doubling is
+// capped at 4 MiB so a misbehaving runtime.Stack cannot grow the buffer without
+// bound.
 //
 // The returned string contains absolute build-host file paths; do not forward
 // it to untrusted clients.
 func StackTrace() string {
-	result := string(debug.Stack())
-	result = strings.TrimSpace(result)
-	return result
+	// bufferCap bounds the grow-and-retry loop at 4 MiB (~10 doublings from the 8 KiB
+	// start) — a backstop against a runaway loop, not a real limit on stack size:
+	// production stack dumps never approach it.
+	const bufferCap = 4 << 20
+
+	buf := make([]byte, 8<<10)
+	for {
+		n := runtime.Stack(buf, false)
+		// Return when the dump fits (n < len), or when the buffer reaches the cap. The
+		// cap bounds the loop: runtime.Stack signals "did not fit" only by returning
+		// n == len(buf), so a misbehaving runtime.Stack that always reported a full
+		// buffer would otherwise double until it exhausts memory. At the cap the dump is
+		// returned best-effort (possibly truncated) — which never happens for a real
+		// stack, whose dump is kilobytes to low megabytes, far below the cap.
+		if n < len(buf) || len(buf) >= bufferCap {
+			return strings.TrimSpace(string(buf[:n]))
+		}
+		buf = make([]byte, 2*len(buf))
+	}
 }
 
-// LineTrace returns a single-line string of the form "file.go:line (method)"
+// LineTrace is the CHEAP trace path: a single call frame (file:line + method)
+// resolved via runtime.Caller in roughly half a microsecond, cheap enough to
+// attach per-error context ubiquitously. Use StackTrace when you need the full
+// multi-frame goroutine dump instead.
+//
+// It returns a single-line string of the form "file.go:line (method)"
 // identifying the call frame skip levels above LineTrace itself. skip=0 is the
 // LineTrace frame; skip=1 is its immediate caller; skip=2 is that caller's
 // caller, and so on. Returns "" when runtime.Caller reports ok == false.

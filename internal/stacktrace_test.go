@@ -1,6 +1,9 @@
 package internal
 
 import (
+	"regexp"
+	"runtime/debug"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -10,6 +13,46 @@ import (
 // "[...]" to its runtime name (e.g. "internal.callFromGeneric[...]"), which
 // contains dots and would confuse the last-dot split without the generic-strip fix.
 func callFromGeneric[T any]() string { return LineTrace(1) }
+
+func TestStackTrace(t *testing.T) {
+	t.Parallel()
+
+	t.Run("dumps the calling goroutine header and frames", func(t *testing.T) {
+		t.Parallel()
+		result := StackTrace()
+		require.True(t, strings.HasPrefix(result, "goroutine "),
+			"stack dump must start with the goroutine header, got: %.40q", result)
+		require.Contains(t, result, "internal.TestStackTrace",
+			"stack dump must contain the calling test frame")
+		require.Equal(t, strings.TrimSpace(result), result,
+			"stack dump must be trimmed of surrounding whitespace")
+	})
+
+	t.Run("agrees with a same-goroutine debug.Stack capture", func(t *testing.T) {
+		// not parallel: both captures must run on this same goroutine so the
+		// goroutine header and caller frame are directly comparable.
+		got := StackTrace()
+		want := strings.TrimSpace(string(debug.Stack()))
+
+		// both must open with the goroutine header line.
+		require.True(t, strings.HasPrefix(got, "goroutine "))
+		require.True(t, strings.HasPrefix(want, "goroutine "))
+
+		// both must name this test function as a frame.
+		require.Contains(t, got, "internal.TestStackTrace")
+		require.Contains(t, want, "internal.TestStackTrace")
+
+		// both must reference this test file with a "file.go:line" locator in the
+		// same layout debug.Stack emits. The two capture calls sit on different
+		// source lines, so the line numbers differ — what must agree is that each
+		// dump carries a stacktrace_test.go:<line> frame for the caller.
+		fileLine := regexp.MustCompile(`stacktrace_test\.go:\d+`)
+		require.Regexp(t, fileLine, got,
+			"StackTrace output must carry the caller's file:line frame")
+		require.Regexp(t, fileLine, want,
+			"debug.Stack output must carry the caller's file:line frame")
+	})
+}
 
 func TestLineTrace(t *testing.T) {
 	t.Parallel()
