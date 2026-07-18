@@ -2,70 +2,70 @@ package internal
 
 import (
 	"path"
-	"regexp"
+	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 )
 
-var (
-	rxFileRowNumber = regexp.MustCompile(`(\w+/\w+/\w+.go:\d+)\s+[A-Ba-z0-9+.]+$`)
-	rxMethodName    = regexp.MustCompile(`/(\w+[^/]+\w+)[({]+.+$`)
-)
-
-// StackTrace returns the current stack trace as a string.
+// StackTrace returns the full goroutine stack as a trimmed string via debug.Stack.
+// It is intentionally kept on debug.Stack rather than reimplemented via
+// runtime.Callers+CallersFrames: callers want the full multiline goroutine dump,
+// the path is not hot (called only at error-construction time on failure paths),
+// and the existing test assertions pin the multiline, human-readable format
+// produced by debug.Stack — reformatting would break them for negligible gain.
+//
+// The returned string contains absolute build-host file paths; do not forward
+// it to untrusted clients.
 func StackTrace() string {
 	result := string(debug.Stack())
 	result = strings.TrimSpace(result)
 	return result
 }
 
-// LineTrace extracts method trace information from a stack trace.
-// It returns the last method name and the file name with the line number.
-// The result is formatted as "file.go:line (method)".
-func LineTrace() string {
-	stacktrace := StackTrace()
-
-	index := strings.LastIndex(stacktrace, path.Join("internal", "stacktrace.go"))
-	if index <= 0 {
-		return ""
-	}
-	index += strings.Index(stacktrace[index:], "\n") + 1
-	lines := strings.Split(stacktrace[index:], "\n")
-
-	method := ""
-	position := ""
-
-	if l := len(lines); l >= 4 {
-		method = lines[2]
-		position = lines[3]
-	} else if l >= 2 {
-		method = lines[0]
-		position = lines[1]
-	} else {
+// LineTrace returns a single-line string of the form "file.go:line (method)"
+// identifying the call frame skip levels above LineTrace itself. skip=0 is the
+// LineTrace frame; skip=1 is its immediate caller; skip=2 is that caller's
+// caller, and so on. Returns "" when runtime.Caller reports ok == false.
+//
+// Note: //go:noinline is deliberately absent. LineTrace exceeds the inline
+// budget by an order of magnitude, and runtime.Caller correctly handles
+// inlined call sites since Go 1.12, so the skip count remains stable even
+// if a caller is inlined.
+func LineTrace(skip int) string {
+	pc, file, line, ok := runtime.Caller(skip)
+	if !ok {
 		return ""
 	}
 
-	// extract method name
-	if n := path.Base(method); len(n) > 3 {
-		if i := strings.LastIndex(n, "."); i > 0 {
-			n = n[i+1:]
-		}
-		if i := strings.LastIndex(n, "("); i > 0 {
-			n = n[:i]
-		}
-		method = n
+	// shorten the absolute file path to "<parent>/<base>" so the output matches
+	// the old debug.Stack parser: stdlib frames become "testing/testing.go",
+	// module-root files get their immediate parent directory prefix.
+	base := path.Base(file)
+	parent := path.Base(path.Dir(file))
+	shortFile := base
+	if parent != "" && parent != "." && parent != "/" {
+		shortFile = parent + "/" + base
 	}
 
-	// extract file path and line number
-	if d, n := path.Split(position); len(n) > 3 {
-		if i := strings.LastIndex(n, " "); i > 0 {
-			n = n[:i]
+	method := "unknown"
+	if fn := runtime.FuncForPC(pc); fn != nil {
+		name := fn.Name()
+		// strip generic instantiation shape suffix appended by the compiler to
+		// top-level generic functions ("pkg.Foo[...]"). It must be removed before
+		// the last-dot split because the brackets contain dots. Methods on generic
+		// types ("pkg.(*T[...]).Method") are safe — their "[...]" is not at end-of-string.
+		if strings.HasSuffix(name, "[...]") {
+			name = name[:len(name)-len("[...]")]
 		}
-		if tmp, _ := path.Split(path.Dir(d)); tmp != "" {
-			d = strings.ReplaceAll(d, tmp, "")
+		// strip the package path prefix: the last dot separates package from function.
+		if i := strings.LastIndex(name, "."); i >= 0 && i+1 < len(name) {
+			name = name[i+1:]
 		}
-		position = path.Join(d, n)
+		if name != "" {
+			method = name
+		}
 	}
 
-	return position + " (" + method + ")"
+	return shortFile + ":" + strconv.Itoa(line) + " (" + method + ")"
 }

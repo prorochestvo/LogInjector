@@ -30,3 +30,9 @@ go.work.sum
 /tmp
 /build
 /logs
+
+# AI workspace files
+.claude/*
+!.claude/settings.json
+!.claude/skills/
+!.claude/README.md
