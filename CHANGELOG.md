@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-20
+
 ### Added
 
 - `RotatingFileHandler` options for lumberjack parity — all opt-in and OFF by default, so a
@@ -25,6 +27,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   options above to the underlying rotating handler. `WithStableCurrentName` is intentionally
   not forwarded — `NewFileLogger` timestamps every file line, which is at odds with a stable
   tail-able access-log format.
+
+### Fixed
+
+- `FileByFormatHandler` now surfaces its file-close error on the `Write` return instead of
+  silently discarding it: the per-write closure had unnamed returns, so a deferred close that
+  assigned into `err` was dropped after the return value was copied.
 
 ## [1.0.7] - 2026-07-18
 
