@@ -6,6 +6,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `RotatingFileHandler` options for lumberjack parity — all opt-in and OFF by default, so a
+  zero-option handler stays byte-identical to the previous one:
+  - `WithStableCurrentName()` keeps the live file at a fixed `prefix.log` path (rotated
+    backups stay indexed `prefix.<8 hex>.log`) so external tooling can follow it with
+    `tail -F`. Resume seeds size from `prefix.log` and adopts legacy indexed files as
+    backups.
+  - `WithMaxAge(d)` prunes rotated backups older than `d` (by mtime) on rotation, on top of
+    the `WithMaxFiles` count bound; `d <= 0` disables it. The unit is a `time.Duration`, so
+    pass the full span — `WithMaxAge(14 * 24 * time.Hour)`, not `WithMaxAge(14)`.
+  - `WithCompress()` gzips each rotated backup to `prefix.<8 hex>.log.gz` and removes the
+    plaintext, synchronously under the handler mutex and crash-safely (temp file + fsync +
+    rename, then remove), preserving the source mtime so age pruning stays honest. A
+    crash-interrupted compression self-heals on the next construction (the `.gz` wins).
+- `NewFileLogger` gains `WithMaxFileAge(d)` and `WithFileCompression()`, forwarding the two
+  options above to the underlying rotating handler. `WithStableCurrentName` is intentionally
+  not forwarded — `NewFileLogger` timestamps every file line, which is at odds with a stable
+  tail-able access-log format.
+
 ## [1.0.7] - 2026-07-18
 
 ### Changed

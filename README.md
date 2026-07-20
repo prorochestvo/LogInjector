@@ -75,6 +75,10 @@ option — is on [pkg.go.dev](https://pkg.go.dev/github.com/prorochestvo/loginje
 - **`httptap` redaction is always on:** `Authorization`, `Proxy-Authorization`, `Cookie`,
   and `Set-Cookie` are never logged. `NewRecoverHandler` buffers the response body, so keep
   it off SSE / WebSocket / streaming routes.
+- **Stable-path rotation:** `RotatingFileHandler(dir, prefix, WithStableCurrentName())`
+  keeps the live file at a fixed `prefix.log` path (backups stay indexed) so external
+  tooling can follow it with `tail -F`; pair it with `WithMaxAge` and `WithCompress` for
+  age-based retention and gzipped backups.
 
 ## License
 
