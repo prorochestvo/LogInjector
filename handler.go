@@ -366,11 +366,6 @@ func FileByFormatHandler(folder string, maxFilesInFolder int, fileNameGenerator 
 			if err != nil {
 				return 0, err
 			}
-			defer func(f *os.File) {
-				if e := f.Close(); e != nil {
-					err = errors.Join(err, e)
-				}
-			}(f)
 
 			var l uint64 = 0
 
@@ -384,6 +379,13 @@ func FileByFormatHandler(folder string, maxFilesInFolder int, fileNameGenerator 
 				err = errors.Join(err, e)
 			} else {
 				l += uint64(n)
+			}
+
+			// close explicitly, not via defer: this closure has unnamed returns, so a
+			// deferred assignment to err runs after `return int(l), err` has already
+			// copied the value and would silently drop the close error.
+			if e := f.Close(); e != nil {
+				err = errors.Join(err, e)
 			}
 
 			if lastFileName != fileName {
