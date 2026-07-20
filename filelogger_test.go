@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prorochestvo/loginjector/internal/synctest"
 	"github.com/stretchr/testify/require"
@@ -402,5 +403,78 @@ func TestNewFileLogger_WithPrinterMinLevel(t *testing.T) {
 			"WithPrinterMinLevel equal to minLevel must still gate below-threshold messages")
 		require.Contains(t, consoleBuf.String(), "at")
 		require.Contains(t, consoleBuf.String(), "above")
+	})
+}
+
+// TestNewFileLogger_RotationOptions covers the WithMaxFileAge and WithFileCompression
+// forwarders added for lumberjack parity: they must reach the underlying
+// RotatingFileHandler while WithStableCurrentName is deliberately not exposed here.
+func TestNewFileLogger_RotationOptions(t *testing.T) {
+	const minLevel LogLevel = 1
+
+	t.Run("WithFileCompression forwards compression", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		l, err := NewFileLogger(dir, "app", minLevel,
+			WithoutPrinter(), WithMaxFileCapacity(20), WithMaxFilesInFolder(50), WithFileCompression())
+		require.NoError(t, err)
+
+		for i := 0; i < 4; i++ {
+			_, err = l.WriteLog(minLevel, []byte(fmt.Sprintf("padding-message-%d", i)))
+			require.NoError(t, err)
+		}
+
+		gzs, err := filepath.Glob(filepath.Join(dir, "*.log.gz"))
+		require.NoError(t, err)
+		require.NotEmpty(t, gzs, "WithFileCompression must gzip rotated backups")
+		// the compressed content is the timestamped file line, proving the whole chain
+		// (TimestampedHandler -> RotatingFileHandler compression) is intact.
+		require.Regexp(t, `^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} `, readGzOrFail(t, gzs[0]))
+	})
+
+	t.Run("WithMaxFileAge forwards age pruning", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		l, err := NewFileLogger(dir, "app", minLevel,
+			WithoutPrinter(), WithMaxFileCapacity(20), WithMaxFilesInFolder(100), WithMaxFileAge(time.Hour))
+		require.NoError(t, err)
+
+		// each stamped line exceeds 20 bytes, so every write rotates: three backups form.
+		for i := 0; i < 3; i++ {
+			_, err = l.WriteLog(minLevel, []byte(fmt.Sprintf("msg%d-padding-xxxxx", i)))
+			require.NoError(t, err)
+		}
+		old := time.Now().Add(-2 * time.Hour)
+		require.NoError(t, os.Chtimes(filepath.Join(dir, "app.00000001.log"), old, old))
+
+		// more writes rotate again and run the age prune (count bound is 100, so age is
+		// the only pressure).
+		for i := 0; i < 3; i++ {
+			_, err = l.WriteLog(minLevel, []byte(fmt.Sprintf("more%d-padding-xxxxx", i)))
+			require.NoError(t, err)
+		}
+
+		_, err = os.Stat(filepath.Join(dir, "app.00000001.log"))
+		require.ErrorIs(t, err, os.ErrNotExist, "WithMaxFileAge must prune the backdated backup")
+	})
+
+	t.Run("no new options leaves NewFileLogger behavior unchanged", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		l, err := NewFileLogger(dir, "app", minLevel, WithoutPrinter())
+		require.NoError(t, err)
+
+		_, err = l.WriteLog(minLevel, []byte("hello world"))
+		require.NoError(t, err)
+
+		files, err := extractFilesOrFail(dir)
+		require.NoError(t, err)
+		require.Contains(t, files, "app.00000001.log")
+		gzs, err := filepath.Glob(filepath.Join(dir, "*.log.gz"))
+		require.NoError(t, err)
+		require.Empty(t, gzs, "without WithFileCompression no .gz must be produced")
 	})
 }

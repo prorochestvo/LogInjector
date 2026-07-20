@@ -2,6 +2,7 @@ package loginjector
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -103,7 +104,10 @@ func WithMaxFiles(n int) RotatingFileOption {
 // genuinely empty ring at index 1. Existing rotated content is permanently destroyed —
 // this is the intended behaviour; omit the option to resume and preserve prior content
 // across restarts. Files in folder that do not match the prefix.<8 hex>.log shape are
-// left untouched.
+// left untouched. When combined with WithCompress the compressed prefix.<8 hex>.log.gz
+// backups and any interrupted prefix.*.log.gz.tmp temps are removed too; with
+// WithStableCurrentName the fixed prefix.log live file is removed as well — so the ring
+// is genuinely empty under every option combination.
 //
 // A missing file or folder is a no-op: no file is created at construction, and the first
 // write creates index-1. Any removal error is stashed and surfaced on the first Write's
@@ -111,6 +115,62 @@ func WithMaxFiles(n int) RotatingFileOption {
 // seeded size to 0, overriding the resume-at-highest-index behaviour.
 func WithFreshStart() RotatingFileOption {
 	return func(c *rotatingFileConfig) { c.freshStart = true }
+}
+
+// WithStableCurrentName keeps the live file at a fixed path, prefix.log, instead of
+// naming it after the current rotation index. On rotation the live file is renamed to
+// the next indexed backup (prefix.<8 hex>.log) and a fresh prefix.log is opened, so
+// external tooling can follow the log at a stable path with tail -F (not tail -f: the
+// inode changes on every rotation). Rotated backups stay indexed exactly as in the
+// default scheme.
+//
+// On resume the handler seeds its size counter from prefix.log and appends to it; the
+// next backup index is one past the highest existing prefix.<8 hex>.log[.gz]. Legacy
+// indexed files already in the folder are adopted as backups and never chosen as the
+// live target. Switching a folder between the indexed and stable schemes between runs is
+// unsupported without WithFreshStart or a clean folder; a stale prefix.log left by a
+// prior stable run must be drained manually when switching back to the indexed scheme.
+//
+// Single-writer invariant: exactly one process may own a (folder, prefix) pair. Two
+// processes renaming prefix.log concurrently race and lose backups; this is not defended
+// in code (lumberjack has the same limitation).
+func WithStableCurrentName() RotatingFileOption {
+	return func(c *rotatingFileConfig) { c.stableName = true }
+}
+
+// WithMaxAge prunes rotated backups whose file modification time is older than d on each
+// rotation, on top of the WithMaxFiles count bound (a backup is removed when either bound
+// is exceeded). The live file is never pruned. A d of zero or negative disables age
+// pruning; that is the default.
+//
+// The unit is a time.Duration, so pass the full span — WithMaxAge(14 * 24 * time.Hour)
+// for two weeks. WithMaxAge(14) is fourteen nanoseconds, i.e. an instant wipe of every
+// backup on the first rotation.
+//
+// Age is measured by mtime, which is unreliable across NFS clock skew, a cp without -p,
+// or a restore that resets timestamps. When WithCompress is also set the compressed
+// backup keeps the source file's mtime (via os.Chtimes), so a genuinely old log
+// compressed today still ages out.
+func WithMaxAge(d time.Duration) RotatingFileOption {
+	return func(c *rotatingFileConfig) { c.maxAge = d }
+}
+
+// WithCompress gzips each rotated backup to prefix.<8 hex>.log.gz and removes the
+// plaintext, synchronously, on the Write that triggers the rotation. It is OFF by
+// default; with no options the handler never compresses and a pre-existing foreign
+// *.log.gz in the folder is ignored.
+//
+// Compression is crash-safe: the gzip is written to a temp file, fsync'd, and renamed
+// into place before the plaintext is removed, so a reader of *.log.gz never sees a
+// partial file. If a crash leaves both prefix.<idx>.log and prefix.<idx>.log.gz for one
+// index, the .gz is authoritative and the plaintext is discarded on the next
+// construction. A .log/.log.gz pair counts as a single file for the WithMaxFiles bound.
+//
+// Because it runs under the handler mutex, compression adds a bounded latency spike to
+// the one Write per rotation; the async background variant is deferred. The handler never
+// appends into a .gz file.
+func WithCompress() RotatingFileOption {
+	return func(c *rotatingFileConfig) { c.compress = true }
 }
 
 // RotatingFileHandler saves messages to files by number. The file name is
@@ -129,14 +189,19 @@ func WithFreshStart() RotatingFileOption {
 // encountered while resolving the resume point is stashed and joined into the
 // first Write's return value.
 //
-// Defaults: max file size 5 MiB, max files 7. Override with WithMaxFileSize and
-// WithMaxFiles; use WithFreshStart to begin each run from a truncated index-1
-// file. FileByFormatHandler is the sibling for filename-generator-driven rotation
-// and has no fresh-start variant (its target name is not known until the first
-// write).
+// Defaults: max file size 5 MiB, max files 7, no age bound, no compression, index-named
+// live file. Override with WithMaxFileSize and WithMaxFiles; use WithFreshStart to begin
+// each run from a truncated index-1 file. The opt-in options WithStableCurrentName (fixed
+// prefix.log live path for tail -F), WithMaxAge (mtime-based retention), and WithCompress
+// (gzip rotated backups to prefix.<8 hex>.log.gz) layer on additively; with none of them
+// the on-disk output is byte-identical to a plain rotating handler. FileByFormatHandler is
+// the sibling for filename-generator-driven rotation and has no fresh-start variant (its
+// target name is not known until the first write).
 //
-// The returned writer is mutex-guarded; the logger never calls its Write
-// concurrently.
+// The returned writer is mutex-guarded; the logger never calls its Write concurrently,
+// and compression (when enabled) runs synchronously inside that lock. A single process
+// must own a given (folder, prefix) pair; concurrent writers from multiple processes are
+// unsupported under WithStableCurrentName and WithCompress.
 func RotatingFileHandler(folder, prefix string, opts ...RotatingFileOption) io.Writer {
 	cfg := rotatingFileConfig{
 		maxFileSize: 5 << 20,
@@ -160,21 +225,84 @@ func RotatingFileHandler(folder, prefix string, opts ...RotatingFileOption) io.W
 	var seedErr error
 	if cfg.freshStart {
 		// overwrite-on-start forces a clean start regardless of what is on disk, so the
-		// resume scan is skipped and every existing prefix.<8 hex>.log file is removed —
-		// not just index-1 truncated — so the ring truly begins empty. Leaving stale
-		// higher-index files behind would let verifyFiles prune the fresh files ahead of
-		// them and let a later rotation append onto old content. Index/size stay 1/0; a
-		// missing file or folder is a no-op. Any remove error is surfaced on first Write.
-		seedErr = resetRotation(folder, prefix)
+		// resume scan is skipped and every existing prefix.<8 hex>.log[.gz] file (plus the
+		// stable live file and stale .log.gz.tmp temps) is removed — not just index-1
+		// truncated — so the ring truly begins empty. Leaving stale higher-index files
+		// behind would let pruning remove the fresh files ahead of them and let a later
+		// rotation append onto old content. Index/size stay 1/0; a missing file or folder
+		// is a no-op. Any remove error is surfaced on first Write.
+		seedErr = resetRotation(folder, prefix, cfg)
 	} else {
 		// resume at the highest existing index so the handler keeps appending to the
 		// newest file across a process restart, instead of restarting at index 1 —
-		// which is the lexicographically-oldest file that verifyFiles prunes first,
+		// which is the lexicographically-oldest file that pruning removes first,
 		// destroying the newest data.
-		index, fileSize, seedErr = resumeRotation(folder, prefix)
+		index, fileSize, seedErr = resumeRotation(folder, prefix, cfg)
 	}
 
-	fileName := rotatingFileName(prefix, index)
+	// with compression on, reconcile a crash-interrupted gzip: a stale plaintext left
+	// beside a complete .gz is discarded (the .gz wins) and orphaned .log.gz.tmp files are
+	// removed. resumeRotation already refuses to append into a .gz-topped index, so this
+	// is order-independent cleanup; it is skipped entirely with compression off, keeping
+	// seedErr byte-identical to the plain handler.
+	if cfg.compress && !cfg.freshStart {
+		seedErr = errors.Join(reconcileCompressed(folder, prefix), seedErr)
+	}
+
+	fileName := liveFileName(prefix, index, cfg.stableName)
+
+	// rotate advances the ring one step and prunes; it mutates index/fileName/fileSize in
+	// place under the handler mutex. Split out of the Write closure only for readability.
+	rotate := func() error {
+		var err error
+		if cfg.stableName {
+			// never clobber a pre-existing backup left by a crash or an earlier run.
+			for backupExists(folder, prefix, index, cfg.compress) {
+				index++
+			}
+			backupBase := rotatingFileName(prefix, index)
+			src := filepath.Join(folder, fileName)
+			if _, e := os.Stat(src); e == nil {
+				if e := os.Rename(src, filepath.Join(folder, backupBase)); e != nil {
+					err = errors.Join(err, e)
+				} else if cfg.compress {
+					err = errors.Join(err, compressFile(folder, backupBase))
+				}
+			} else if !os.IsNotExist(e) {
+				err = errors.Join(err, e)
+			}
+			index++ // advance to the next free backup slot for the following rotation.
+			fileSize = 0
+			// fileName stays the fixed prefix.log live path.
+		} else {
+			oldIndex := index
+			index++
+			if cfg.compress {
+				err = errors.Join(err, compressFile(folder, rotatingFileName(prefix, oldIndex)))
+			}
+			fileName = rotatingFileName(prefix, index)
+			// seed the new target's size from disk rather than assuming 0: when the
+			// handler rotates into a pre-existing higher-index file (from a prior run) an
+			// assumed-0 counter would let that file grow to ~2× the cap before rotating
+			// again.
+			fileSize = 0
+			if fi, e := os.Stat(filepath.Join(folder, fileName)); e == nil {
+				fileSize = uint64(fi.Size())
+			} else if !os.IsNotExist(e) {
+				err = errors.Join(err, e)
+			}
+		}
+
+		// zero-option handlers keep the original whole-folder verifyFiles pruning
+		// byte-for-byte; any opt-in (age, compression, stable name) uses the richer prune
+		// that understands .gz pairs, the age cutoff, and the live-file exclusion.
+		if !cfg.stableName && cfg.maxAge <= 0 && !cfg.compress {
+			err = errors.Join(err, verifyFiles(folder, cfg.maxFiles))
+		} else {
+			err = errors.Join(err, pruneRotation(folder, prefix, cfg, filepath.Base(fileName), time.Now()))
+		}
+		return err
+	}
 
 	w := &writer{
 		h: func(msg []byte) (int, error) {
@@ -187,11 +315,6 @@ func RotatingFileHandler(folder, prefix string, opts ...RotatingFileOption) io.W
 			if openErr != nil {
 				return 0, errors.Join(err, openErr)
 			}
-			defer func(f *os.File) {
-				if e := f.Close(); e != nil {
-					err = errors.Join(err, e)
-				}
-			}(f)
 
 			var l uint64 = 0
 
@@ -207,22 +330,16 @@ func RotatingFileHandler(folder, prefix string, opts ...RotatingFileOption) io.W
 				l += uint64(n)
 			}
 
+			// close the live file before any rotation: a stable-name rename and the gzip
+			// pass both need the descriptor released first.
+			if e := f.Close(); e != nil {
+				err = errors.Join(err, e)
+			}
+
 			fileSize += l
 
 			if fileSize > uint64(cfg.maxFileSize) {
-				index++
-				fileName = rotatingFileName(prefix, index)
-				// seed the new target's size from disk rather than assuming 0: when the
-				// handler rotates into a pre-existing higher-index file (from a prior
-				// run) an assumed-0 counter would let that file grow to ~2× the cap
-				// before rotating again.
-				fileSize = 0
-				if fi, e := os.Stat(filepath.Join(folder, fileName)); e == nil {
-					fileSize = uint64(fi.Size())
-				} else if !os.IsNotExist(e) {
-					err = errors.Join(err, e)
-				}
-				err = errors.Join(err, verifyFiles(folder, cfg.maxFiles))
+				err = errors.Join(err, rotate())
 			}
 
 			return int(l), err
@@ -249,11 +366,6 @@ func FileByFormatHandler(folder string, maxFilesInFolder int, fileNameGenerator 
 			if err != nil {
 				return 0, err
 			}
-			defer func(f *os.File) {
-				if e := f.Close(); e != nil {
-					err = errors.Join(err, e)
-				}
-			}(f)
 
 			var l uint64 = 0
 
@@ -267,6 +379,13 @@ func FileByFormatHandler(folder string, maxFilesInFolder int, fileNameGenerator 
 				err = errors.Join(err, e)
 			} else {
 				l += uint64(n)
+			}
+
+			// close explicitly, not via defer: this closure has unnamed returns, so a
+			// deferred assignment to err runs after `return int(l), err` has already
+			// copied the value and would silently drop the close error.
+			if e := f.Close(); e != nil {
+				err = errors.Join(err, e)
 			}
 
 			if lastFileName != fileName {
@@ -436,6 +555,9 @@ type rotatingFileConfig struct {
 	maxFileSize uint32
 	maxFiles    int
 	freshStart  bool
+	stableName  bool          // WithStableCurrentName: live file is the fixed prefix.log.
+	maxAge      time.Duration // WithMaxAge: prune backups older than this; <= 0 disables.
+	compress    bool          // WithCompress: gzip rotated backups to prefix.<idx>.log.gz.
 }
 
 // rotatingFileName renders the on-disk name for a given rotation index, e.g.
@@ -445,52 +567,73 @@ func rotatingFileName(prefix string, index int) string {
 	return fmt.Sprintf("%s.%08X.%s", prefix, index, defaultFileExtension)
 }
 
-// resumeRotation resolves the starting rotation index and seed size for prefix in
-// folder by scanning for existing prefix.<8 hex>.log files and picking the highest
-// index. It returns (1, 0, nil) when none are found. The returned size is the
-// on-disk size of the resolved file, so the first write accounts for existing
-// content. Filenames that do not match the exact shape are ignored. A glob error
-// or an unexpected stat error is returned as seedErr for the caller to surface on
-// the first Write; index and size then fall back to the best values parsed so far.
-func resumeRotation(folder, prefix string) (index int, size uint64, seedErr error) {
-	index = 1
-
-	// glob only the extension (a literal pattern) so metacharacters in prefix cannot
-	// corrupt the match set, then filter to prefix.<8 hex>.log explicitly. The prefix
-	// guard is load-bearing: without it a foreign "XXXXXXXX.log" would survive the
-	// TrimPrefix no-op and be misparsed as a valid index.
-	matches, err := filepath.Glob(filepath.Join(folder, "*."+defaultFileExtension))
+// resumeRotation resolves the starting rotation index and seed size for prefix in folder
+// by scanning existing prefix.<8 hex>.log[.gz] backups and picking the highest index.
+// .gz files are considered only when cfg.compress is set. It returns (1, 0, nil) when no
+// backups exist.
+//
+// Indexed mode: when the highest index is uncompressed the handler resumes appending to
+// it and seeds size from its on-disk size; when the highest index is a .gz (the handler
+// never appends into a compressed file) it resumes at highest+1 with size 0, ignoring any
+// stale plaintext left beside the .gz.
+//
+// Stable-name mode: the live file is the fixed prefix.log, so size is seeded from it (not
+// from any backup) and the next backup index is highest+1. Filenames not matching the
+// exact shape are ignored. A glob or unexpected stat error is returned as seedErr for the
+// caller to surface on the first Write.
+func resumeRotation(folder, prefix string, cfg rotatingFileConfig) (index int, size uint64, seedErr error) {
+	// glob literal patterns so metacharacters in prefix cannot corrupt the match set,
+	// then filter to prefix.<8 hex>.log[.gz] explicitly via parseRotationIndex. The prefix
+	// guard is load-bearing: without it a foreign "XXXXXXXX.log" would be misparsed as a
+	// valid index.
+	matches, err := globRotation(folder, cfg.compress)
 	if err != nil {
-		return index, 0, err
+		return 1, 0, err
 	}
 
+	highest := 0
 	found := false
+	highestGz := false // whether the highest index has a compressed (.gz) form.
 	for _, p := range matches {
-		base := filepath.Base(p)
-		if !strings.HasPrefix(base, prefix+".") {
-			// not our prefix; skip before the TrimPrefix no-op can misparse it.
+		idx, gz, ok := parseRotationIndex(filepath.Base(p), prefix)
+		if !ok {
 			continue
 		}
-		mid := strings.TrimSuffix(strings.TrimPrefix(base, prefix+"."), "."+defaultFileExtension)
-		if len(mid) != 8 {
-			// reject non-8-hex middles: foreign files or malformed indices.
-			continue
-		}
-		n, e := strconv.ParseUint(mid, 16, 32)
-		if e != nil {
-			continue
-		}
-		if !found || int(n) > index {
-			index = int(n)
+		if !found || idx > highest {
+			highest = idx
 			found = true
+			highestGz = gz
+		} else if idx == highest && gz {
+			// a .gz for the current top index wins over a co-existing stale plaintext.
+			highestGz = true
 		}
+	}
+
+	if cfg.stableName {
+		// the live file is prefix.log; the next backup slot is one past the highest.
+		index = highest + 1
+		if !found {
+			index = 1
+		}
+		if fi, e := os.Stat(filepath.Join(folder, stableLiveName(prefix))); e == nil {
+			size = uint64(fi.Size())
+		} else if !os.IsNotExist(e) {
+			seedErr = e
+		}
+		return index, size, seedErr
 	}
 
 	if !found {
 		return 1, 0, nil
 	}
 
-	// seed size from the resolved highest-index file (0 if it does not exist yet).
+	if highestGz {
+		// the top index is compressed; never append into a .gz — resume one past it.
+		return highest + 1, 0, nil
+	}
+
+	// the top index is plain; resume appending to it, seeding size from disk.
+	index = highest
 	if fi, e := os.Stat(filepath.Join(folder, rotatingFileName(prefix, index))); e == nil {
 		size = uint64(fi.Size())
 	} else if !os.IsNotExist(e) {
@@ -499,41 +642,44 @@ func resumeRotation(folder, prefix string) (index int, size uint64, seedErr erro
 	return index, size, seedErr
 }
 
-// resetRotation removes every prefix.<8 hex>.log file in folder so a WithFreshStart
+// resetRotation removes every prefix.<8 hex>.log[.gz] file in folder so a WithFreshStart
 // handler begins with a genuinely empty ring instead of only truncating index-1 — which
-// would leave stale higher-index files for verifyFiles to prune ahead of the fresh ones
-// and for a later rotation to append onto. It globs the literal "*.log" (so prefix
-// metacharacters cannot corrupt the match set) and filters to the strict shape, mirroring
-// resumeRotation. Foreign filenames are left untouched. Remove errors are joined and
-// returned for the caller to surface on the first Write; a missing file is not an error.
-func resetRotation(folder, prefix string) error {
-	matches, err := filepath.Glob(filepath.Join(folder, "*."+defaultFileExtension))
+// would leave stale higher-index files for pruning to remove ahead of the fresh ones and
+// for a later rotation to append onto. It globs literal patterns (so prefix metacharacters
+// cannot corrupt the match set) and filters to the strict indexed shape, mirroring
+// resumeRotation. Under WithCompress the .gz backups and any interrupted .log.gz.tmp temps
+// are removed too; under WithStableCurrentName the fixed prefix.log live file is removed as
+// well. Foreign filenames are left untouched. Remove errors are joined and returned for the
+// caller to surface on the first Write; a missing file is not an error.
+func resetRotation(folder, prefix string, cfg rotatingFileConfig) error {
+	matches, err := globRotation(folder, cfg.compress)
 	if err != nil {
 		return err
 	}
 	for _, p := range matches {
-		base := filepath.Base(p)
-		if !strings.HasPrefix(base, prefix+".") {
+		if _, _, ok := parseRotationIndex(filepath.Base(p), prefix); !ok {
 			continue
 		}
-		mid := strings.TrimSuffix(strings.TrimPrefix(base, prefix+"."), "."+defaultFileExtension)
-		if len(mid) != 8 {
-			continue
-		}
-		if _, e := strconv.ParseUint(mid, 16, 32); e != nil {
-			continue
-		}
-		if e := os.Remove(p); e != nil && !os.IsNotExist(e) {
-			err = errors.Join(err, e)
-		}
+		err = errors.Join(err, removeIfExists(p))
+	}
+	if cfg.stableName {
+		// the stable live file has no index and would survive the loop above.
+		err = errors.Join(err, removeIfExists(filepath.Join(folder, stableLiveName(prefix))))
+	}
+	if cfg.compress {
+		err = errors.Join(err, removeCompressTemps(folder, prefix))
 	}
 	return err
 }
 
-// verifyFiles removes older files if the number of files exceeds limit
+// verifyFiles removes older files if the number of files exceeds limit. It is the blunt,
+// extension-agnostic count prune shared by the zero-option RotatingFileHandler and
+// FileByFormatHandler: it sorts every *.log lexically and removes the oldest past the
+// bound, without parsing indices (so date-named and foreign files are pruned too). The
+// richer pruneRotation handles the opt-in age/compress/stable paths. .gz files are never
+// in scope here — it always globs plaintext only.
 func verifyFiles(folder string, limit int) error {
-	// read files by format
-	files, err := filepath.Glob(filepath.Join(folder, "*."+defaultFileExtension))
+	files, err := globRotation(folder, false)
 	if err != nil || len(files) == 0 {
 		return err
 	}
@@ -547,6 +693,284 @@ func verifyFiles(folder string, limit int) error {
 
 const defaultFilePermissions = 0640
 const defaultFileExtension = "log"
+const gzipExtension = "gz"
+const tmpExtension = "tmp"
+
+// stableLiveName is the fixed live-file name under WithStableCurrentName: prefix.log.
+func stableLiveName(prefix string) string {
+	return prefix + "." + defaultFileExtension
+}
+
+// liveFileName is the current write target: the fixed prefix.log under stable-name mode,
+// otherwise the index-named prefix.<8 hex>.log.
+func liveFileName(prefix string, index int, stableName bool) string {
+	if stableName {
+		return stableLiveName(prefix)
+	}
+	return rotatingFileName(prefix, index)
+}
+
+// parseRotationIndex parses a rotated backup's index from its base name. It strips an
+// optional trailing .gz first (reporting gz), then applies the strict
+// prefix.<8 hex>.log shape check. Stripping .gz before the check is load-bearing: without
+// it prefix.<8 hex>.log.gz has a 15-character middle and is silently dropped. The live
+// prefix.log (middle "log", length 3) is intentionally not an index and returns ok=false;
+// it is resolved by liveFileName, not this scan.
+func parseRotationIndex(base, prefix string) (index int, gz bool, ok bool) {
+	if strings.HasSuffix(base, "."+gzipExtension) {
+		gz = true
+		base = strings.TrimSuffix(base, "."+gzipExtension)
+	}
+	if !strings.HasPrefix(base, prefix+".") {
+		return 0, gz, false
+	}
+	mid := strings.TrimSuffix(strings.TrimPrefix(base, prefix+"."), "."+defaultFileExtension)
+	if len(mid) != 8 {
+		return 0, gz, false
+	}
+	n, err := strconv.ParseUint(mid, 16, 32)
+	if err != nil {
+		return 0, gz, false
+	}
+	return int(n), gz, true
+}
+
+// globRotation returns the rotation files in folder by globbing the literal "*.log" (and
+// "*.log.gz" when includeGz), never interpolating a caller-supplied prefix into the
+// pattern — the glob-injection guard the resume and prune scans depend on. Callers filter
+// the result to a specific prefix with parseRotationIndex.
+func globRotation(folder string, includeGz bool) ([]string, error) {
+	matches, err := filepath.Glob(filepath.Join(folder, "*."+defaultFileExtension))
+	if err != nil {
+		return nil, err
+	}
+	if includeGz {
+		gz, e := filepath.Glob(filepath.Join(folder, "*."+defaultFileExtension+"."+gzipExtension))
+		if e != nil {
+			return matches, e
+		}
+		matches = append(matches, gz...)
+	}
+	return matches, nil
+}
+
+// backupExists reports whether a rotated backup already occupies index for prefix in
+// folder, as either the plaintext or (when includeGz) the compressed form. The rotation
+// collision guard uses it so a crash/resume leftover is never clobbered by a rename.
+func backupExists(folder, prefix string, index int, includeGz bool) bool {
+	if _, err := os.Stat(filepath.Join(folder, rotatingFileName(prefix, index))); err == nil {
+		return true
+	}
+	if includeGz {
+		if _, err := os.Stat(filepath.Join(folder, rotatingFileName(prefix, index)+"."+gzipExtension)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// backupEntry groups the on-disk files that make up one rotated backup index: the
+// plaintext prefix.<idx>.log and/or its compressed prefix.<idx>.log.gz sibling. mtime is
+// the newest modification time among them, used by the age prune so a pair is aged as a
+// unit. The index is the map key in listBackups, so it is not repeated here.
+type backupEntry struct {
+	paths []string
+	mtime time.Time
+}
+
+// pruneRotation enforces the retention bounds on prefix's rotated backups in folder: first
+// age (when cfg.maxAge > 0, any backup whose mtime precedes now-maxAge is removed), then
+// count (keep only the newest cfg.maxFiles-1 backups, since the live file is the +1). The
+// live file, identified by liveBase, is excluded by name so a quiet log's live file is
+// never pruned even when it is the oldest on disk. A .log/.log.gz pair for one index counts
+// as a single backup and is removed together. .gz files are considered only when
+// cfg.compress is set.
+func pruneRotation(folder, prefix string, cfg rotatingFileConfig, liveBase string, now time.Time) error {
+	groups, err := listBackups(folder, prefix, cfg.compress, liveBase)
+	if err != nil {
+		return err
+	}
+
+	indices := make([]int, 0, len(groups))
+	for i := range groups {
+		indices = append(indices, i)
+	}
+	sort.Ints(indices) // ascending index == oldest data first.
+
+	remove := func(idx int) {
+		for _, p := range groups[idx].paths {
+			err = errors.Join(err, removeIfExists(p))
+		}
+	}
+
+	// age phase: drop everything older than the cutoff, keeping the survivors in order.
+	survivors := make([]int, 0, len(indices))
+	if cfg.maxAge > 0 {
+		cutoff := now.Add(-cfg.maxAge)
+		for _, i := range indices {
+			if groups[i].mtime.Before(cutoff) {
+				remove(i)
+				continue
+			}
+			survivors = append(survivors, i)
+		}
+	} else {
+		survivors = append(survivors, indices...)
+	}
+
+	// count phase: keep the newest maxFiles-1 backups (the live file is the +1).
+	keep := cfg.maxFiles - 1
+	if keep < 0 {
+		keep = 0
+	}
+	for i := 0; i < len(survivors)-keep; i++ {
+		remove(survivors[i])
+	}
+	return err
+}
+
+// listBackups groups prefix's rotated backup files in folder by rotation index, skipping
+// the live file (excludeBase) and any non-matching name. .gz siblings are included only
+// when includeGz is set, preserving the byte-identical zero-option contract. Files that
+// vanish between the glob and the stat are ignored (nothing left to prune).
+func listBackups(folder, prefix string, includeGz bool, excludeBase string) (map[int]*backupEntry, error) {
+	matches, err := globRotation(folder, includeGz)
+	if err != nil {
+		return nil, err
+	}
+	groups := make(map[int]*backupEntry)
+	for _, p := range matches {
+		base := filepath.Base(p)
+		if base == excludeBase {
+			continue
+		}
+		idx, _, ok := parseRotationIndex(base, prefix)
+		if !ok {
+			continue
+		}
+		fi, e := os.Stat(p)
+		if e != nil {
+			continue
+		}
+		g := groups[idx]
+		if g == nil {
+			g = &backupEntry{}
+			groups[idx] = g
+		}
+		g.paths = append(g.paths, p)
+		if fi.ModTime().After(g.mtime) {
+			g.mtime = fi.ModTime()
+		}
+	}
+	return groups, nil
+}
+
+// compressFile gzips folder/base (a rotated plaintext prefix.<idx>.log) to
+// folder/base.gz and removes the plaintext, crash-safely: it writes to a 0640 O_EXCL temp
+// (never os.Create, which is world-readable, and O_EXCL also refuses a pre-planted
+// symlink), flushes and fsyncs, then renames the temp into place before removing the
+// plaintext — so a reader of *.log.gz never sees a partial file. The .gz keeps the source
+// file's mtime (os.Chtimes) so age pruning stays honest. A missing source is a no-op.
+func compressFile(folder, base string) error {
+	src := filepath.Join(folder, base)
+	fi, err := os.Stat(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+
+	dst := src + "." + gzipExtension
+	tmp := dst + "." + tmpExtension
+	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, defaultFilePermissions)
+	if err != nil {
+		return err
+	}
+
+	zw := gzip.NewWriter(out)
+	if _, e := io.Copy(zw, in); e != nil {
+		_ = zw.Close()
+		_ = out.Close()
+		return errors.Join(e, removeIfExists(tmp))
+	}
+	if e := zw.Close(); e != nil {
+		_ = out.Close()
+		return errors.Join(e, removeIfExists(tmp))
+	}
+	if e := out.Sync(); e != nil {
+		_ = out.Close()
+		return errors.Join(e, removeIfExists(tmp))
+	}
+	if e := out.Close(); e != nil {
+		return errors.Join(e, removeIfExists(tmp))
+	}
+	if e := os.Rename(tmp, dst); e != nil {
+		return errors.Join(e, removeIfExists(tmp))
+	}
+
+	// preserve the source mtime on the .gz so WithMaxAge still ages it out correctly,
+	// then drop the plaintext now that the compressed copy is durable.
+	err = errors.Join(err, os.Chtimes(dst, time.Now(), fi.ModTime()))
+	err = errors.Join(err, removeIfExists(src))
+	return err
+}
+
+// reconcileCompressed heals a crash-interrupted compression at construction: it removes
+// orphaned prefix.*.log.gz.tmp temps and, wherever both prefix.<idx>.log and its .gz exist,
+// discards the plaintext (the durable .gz is authoritative). It only runs under
+// WithCompress, so a plain handler never touches .gz files.
+func reconcileCompressed(folder, prefix string) error {
+	err := removeCompressTemps(folder, prefix)
+
+	// a leftover plaintext beside a complete .gz is a crash remnant; the .gz wins.
+	logs, e := globRotation(folder, false)
+	if e != nil {
+		return errors.Join(err, e)
+	}
+	for _, p := range logs {
+		idx, gz, ok := parseRotationIndex(filepath.Base(p), prefix)
+		if !ok || gz {
+			continue
+		}
+		gzPath := filepath.Join(folder, rotatingFileName(prefix, idx)+"."+gzipExtension)
+		if _, statErr := os.Stat(gzPath); statErr == nil {
+			err = errors.Join(err, removeIfExists(p))
+		}
+	}
+	return err
+}
+
+// removeCompressTemps deletes stale prefix.*.log.gz.tmp files left by an interrupted
+// compression. It globs the literal temp pattern and filters by prefix, so metacharacters
+// in prefix cannot corrupt the match set.
+func removeCompressTemps(folder, prefix string) error {
+	tmps, err := filepath.Glob(filepath.Join(folder, "*."+defaultFileExtension+"."+gzipExtension+"."+tmpExtension))
+	if err != nil {
+		return err
+	}
+	for _, p := range tmps {
+		if !strings.HasPrefix(filepath.Base(p), prefix+".") {
+			continue
+		}
+		err = errors.Join(err, removeIfExists(p))
+	}
+	return err
+}
+
+// removeIfExists removes path, treating an already-absent file as success.
+func removeIfExists(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
 
 // WithMinLevel wraps handler so that Logger treats it as a LeveledHandler with
 // the given minimum level. The returned writer forwards Write calls to handler

@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // FileLoggerOption configures NewFileLogger.
@@ -23,6 +24,27 @@ func WithMaxFileCapacity(n uint32) FileLoggerOption {
 // the log folder. Older files beyond the limit are pruned on rotation. The default is 7.
 func WithMaxFilesInFolder(n int) FileLoggerOption {
 	return func(c *fileLoggerConfig) { c.maxFilesInFolder = n }
+}
+
+// WithMaxFileAge forwards RotatingFileHandler's WithMaxAge to the underlying rotating
+// handler: rotated files whose mtime is older than d are pruned on rotation, on top of the
+// WithMaxFilesInFolder count bound. A d of zero or negative disables age pruning, which is
+// the default. The unit is a time.Duration, so pass the full span —
+// WithMaxFileAge(14 * 24 * time.Hour) for two weeks, not WithMaxFileAge(14) (14 ns).
+func WithMaxFileAge(d time.Duration) FileLoggerOption {
+	return func(c *fileLoggerConfig) { c.maxAge = d }
+}
+
+// WithFileCompression forwards RotatingFileHandler's WithCompress to the underlying
+// rotating handler: each rotated file is gzipped to prefix.<8 hex>.log.gz and the plaintext
+// removed, synchronously on the triggering write. It is OFF by default.
+//
+// RotatingFileHandler's WithStableCurrentName is deliberately NOT exposed here: NewFileLogger
+// wraps the handler in TimestampedHandler, prefixing every line with a timestamp, which is at
+// odds with a stable tail-able access-log format. Consumers wanting the fixed prefix.log live
+// path build a RotatingFileHandler directly instead.
+func WithFileCompression() FileLoggerOption {
+	return func(c *fileLoggerConfig) { c.compress = true }
 }
 
 // WithTempDirFallback enables the temp-directory fallback: when the folder argument to
@@ -139,10 +161,23 @@ func NewFileLogger(folder, prefix string, minLevel LogLevel, opts ...FileLoggerO
 		return nil, fmt.Errorf("loginjector: set permissions on log folder %q: %w", folder, err)
 	}
 
+	rotatingOpts := []RotatingFileOption{
+		WithMaxFileSize(cfg.maxFileCapacity),
+		WithMaxFiles(cfg.maxFilesInFolder),
+	}
+	// only append the additive options when active, so the zero-new-option call is
+	// byte-identical to the size/count-only handler it replaced.
+	if cfg.maxAge > 0 {
+		rotatingOpts = append(rotatingOpts, WithMaxAge(cfg.maxAge))
+	}
+	if cfg.compress {
+		rotatingOpts = append(rotatingOpts, WithCompress())
+	}
+
 	handlers := []io.Writer{
 		// stamp file lines sink-side (blessed emitters use Lmsgprefix only, so nothing
 		// else stamps the file); the RotatingFileHandler stays the underlying sink.
-		TimestampedHandler(RotatingFileHandler(folder, prefix, WithMaxFileSize(cfg.maxFileCapacity), WithMaxFiles(cfg.maxFilesInFolder))),
+		TimestampedHandler(RotatingFileHandler(folder, prefix, rotatingOpts...)),
 	}
 	if cfg.printer {
 		p := TimestampedPrintHandler(cfg.printerOpts...)
@@ -166,6 +201,8 @@ func NewFileLogger(folder, prefix string, minLevel LogLevel, opts ...FileLoggerO
 type fileLoggerConfig struct {
 	maxFileCapacity    uint32
 	maxFilesInFolder   int
+	maxAge             time.Duration // WithMaxFileAge; forwarded to RotatingFileHandler.
+	compress           bool          // WithFileCompression; forwarded to RotatingFileHandler.
 	tempFallback       bool
 	printer            bool
 	printerOpts        []PrintOption
