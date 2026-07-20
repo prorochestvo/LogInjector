@@ -8,10 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build & Test Commands
 
-**No Makefile** — use raw `go`. Package is pure Go: build/test with `CGO_ENABLED=0`, tests always `-race` (append `-run <name>` for a single test/subtest):
+**No Makefile** — use raw `go`. The package builds clean with `CGO_ENABLED=0` (pure Go, no cgo deps), but the race detector needs cgo on this arm64 host, so race tests run with `CGO_ENABLED=1` (append `-run <name>` for a single test/subtest):
 
 ```bash
-CGO_ENABLED=0 go test -race ./...    # full suite
+CGO_ENABLED=1 go test -race ./...    # full suite (race needs cgo on this arm64 host)
+CGO_ENABLED=0 go test ./...          # no-cgo build proof
 go vet ./... && gofmt -l .           # vet + list unformatted
 ```
 
@@ -54,9 +55,10 @@ Convenience writers: `Printf`/`Print`, `Write` (`io.Writer` at `minimumLogLevel`
 
 ### LogLevel is consumer-defined
 
-`LogLevel` is just `type LogLevel int`. **The library ships no DEBUG/INFO/WARN/ERROR
-constants** — the consumer declares their own (see README usage). Severity ordering is
-by integer value: higher = more severe, since the gate is `level < minimumLogLevel`.
+`LogLevel` is just `type LogLevel int`. **The root package ships no DEBUG/INFO/WARN/ERROR
+constants** — the consumer declares their own, or imports the `levels` subpackage
+(`Debug`..`Critical` = 1..6, plus `Parse`/`Name`). Severity ordering is by integer value:
+higher = more severe, since the gate is `level < minimumLogLevel`.
 
 ### Plugging the logger into other writers
 
@@ -64,7 +66,7 @@ by integer value: higher = more severe, since the gate is `level < minimumLogLev
 
 ### Handlers (`handler.go`)
 
-Every handler is a **factory function returning `io.Writer`**, internally wrapping a mutex-guarded `writer` so each handler serializes its own writes. `PrintHandler()` is the default when `NewLogger` gets no handlers. File handlers (`CyclicOverwritingFilesHandler`, `FileByFormatHandler`) share `.log` extension, `0640` perms, append mode, and oldest-first pruning past their max-files bound; runtime logs live under `./logs/`.
+Every handler is a **factory function returning `io.Writer`**, internally wrapping a mutex-guarded `writer` so each handler serializes its own writes. `TimestampedPrintHandler()` is the default when `NewLogger` gets no handlers. File handlers (`RotatingFileHandler`, `FileByFormatHandler`) share `.log` extension, `0640` perms, append mode, and oldest-first pruning past their max-files bound; runtime logs live under `./logs/`. `RotatingFileHandler` carries opt-in `RotatingFileOption`s — `WithStableCurrentName` (fixed `prefix.log` live path for `tail -F`), `WithMaxAge` (mtime retention), `WithCompress` (gzip backups) — all off by default and byte-identical when unused.
 
 ### HTTP traffic tap (`httptap/`)
 
@@ -85,7 +87,8 @@ Generic Go conventions (style, file declaration order, test structure, test-only
 code placement, godoc, error discipline, code organization) come from the
 `stack-go` plugin skills — they are not restated here. Project-specific constraints:
 
-- **No CGO**: keep `CGO_ENABLED=0` for build/test. The only direct deps are
+- **No CGO**: keep the package cgo-free (`CGO_ENABLED=0` builds clean); the `-race`
+  gate is the exception — it needs cgo (see Build & Test). The only direct deps are
   `stretchr/testify` (tests) and `twinj/uuid` (hook IDs) — avoid adding heavy or
   CGO-dependent dependencies.
 - **Race coverage is load-bearing**: concurrency-sensitive handlers have dedicated
@@ -95,7 +98,7 @@ code placement, godoc, error discipline, code organization) come from the
   `TestFileByFormatHandlerV2`) predate the one-`Test*`-per-method rule; prefer the
   canonical subtest form for new and refactored tests, don't mass-rename.
 - **No Makefile**: gates run as raw Go commands (`gofmt -l .`, `go vet ./...`,
-  `CGO_ENABLED=0 go test -race ./...`).
+  `CGO_ENABLED=1 go test -race ./...` — race needs cgo on this arm64 host).
 
 ## Working agreement
 
@@ -109,7 +112,7 @@ All non-trivial work follows the plan-first pipeline:
    C: performance & architecture) and the changed files. Full three-lens fan-out is
    mandatory on the first review; the post-fix re-review is ONE solo reviewer scoped
    to the changed lines.
-4. **Gate** — `gofmt -l .` clean, `go vet` and `CGO_ENABLED=0 go test -race ./...`
+4. **Gate** — `gofmt -l .` clean, `go vet` and `CGO_ENABLED=1 go test -race ./...`
    green before review; a red tree goes to the `testdoctor` agent first.
 5. **Complete** — the orchestrator merges the three reports, deduplicates, resolves
    conflicting verdicts (naming what was rejected and why; the user has final say).
