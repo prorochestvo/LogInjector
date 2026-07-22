@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/prorochestvo/loginjector/internal"
 )
@@ -16,9 +17,20 @@ type TraceError interface {
 	error
 }
 
-// NewTraceError creates a new TraceError with the current stack trace.
+// NewTraceError creates a TraceError whose Line() is the caller's file:line (method).
+// It is a pure leaf — it carries a line and no cause, so it has no Unwrap and does not
+// participate in errors.Is/As traversal. Use NewTraceErrorf or WrapTraceError when you
+// need a cause-carrying, unwrappable trace error.
 func NewTraceError() TraceError {
-	return &traceError{line: internal.LineTrace(2)}
+	return NewTraceErrorSkip(1) // +1 for this delegation hop
+}
+
+// NewTraceErrorSkip creates a TraceError whose Line() is resolved skip frames above
+// the caller of NewTraceErrorSkip. skip=0 is the direct caller; skip=1 is that
+// caller's caller. Use it when wrapping NewTraceError in a helper so the line still
+// points at your caller rather than the wrapper.
+func NewTraceErrorSkip(skip int) TraceError {
+	return &traceError{line: internal.LineTrace(skip + 2)}
 }
 
 // NewTraceErrorf creates a TraceError with a formatted message and the current
@@ -106,6 +118,20 @@ func WrapStackTraceError(cause error, format string, args ...any) StackTraceErro
 		runtime: cachedRuntime(),
 		cause:   cause,
 	}
+}
+
+// StackRedacted returns e.Stack() with each frame's absolute source path shortened
+// to "<parent>/<base>" — the identical reduction LineTrace applies (e.g.
+// "/home/ci/proj/main.go:10" becomes "proj/main.go:10"). The line numbers, goroutine
+// header, and frame ordering are preserved; only the leading directory prefix of each
+// frame path is dropped. This removes build-host absolute path prefixes, making the
+// output safe to surface where Stack() is not.
+//
+// It is a package-level function rather than a method on StackTraceError so the
+// interface stays sealed: adding a method to the exported interface would break any
+// external type that implements it.
+func StackRedacted(e StackTraceError) string {
+	return internal.RedactStackPaths(e.Stack())
 }
 
 // PublicError separates a user-safe public message from the internal cause.
@@ -354,8 +380,10 @@ func (e *httpErrorWithCause) Unwrap() error {
 // Only one provider is active at a time; a subsequent SetRuntimeDetailsProvider
 // call before the cache is populated replaces the first with no composition.
 //
-// The provider's return value is appended verbatim to error strings; avoid
-// control characters in the return value.
+// The provider's return value is sanitized to keep Runtime() single-line: CR, LF, and
+// TAB are collapsed to spaces and other control characters are stripped, so a multi-line
+// or control-char-laden provider result cannot break the single-line log contract. Printable
+// Unicode is preserved.
 //
 // Pass nil to clear a previously-set provider (useful in tests).
 func SetRuntimeDetailsProvider(fn func() string) {
@@ -364,10 +392,45 @@ func SetRuntimeDetailsProvider(fn func() string) {
 	runtimeDetailsExtraMu.Unlock()
 }
 
+// RuntimeDetailsFrozen reports whether the process-wide runtime-details string has
+// already been computed and cached (frozen). Once it returns true, a subsequent
+// SetRuntimeDetailsProvider call is a no-op — the provider will never run and its
+// detail will not appear in any StackTraceError's Runtime().
+//
+// This is an advisory diagnostic, not a synchronization primitive: it reports the
+// freeze state at the moment of the call. It gives no guarantee that a provider set
+// immediately after a false result will take effect (a concurrent StackTraceError
+// construction may freeze the string in between). Use it at startup to warn that a
+// provider was registered too late, not to gate registration.
+func RuntimeDetailsFrozen() bool {
+	return runtimeDetailsFrozen.Load()
+}
+
+// sanitizeRuntimeExtra keeps Runtime() single-line: CR/LF/TAB become spaces,
+// other control chars are dropped. Runs inside the once.Do (single-threaded).
+func sanitizeRuntimeExtra(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			return ' '
+		case r < 0x20 || r == 0x7f:
+			return -1 // drop other control chars
+		default:
+			return r
+		}
+	}, s)
+}
+
 var (
 	runtimeDetailsExtraMu       sync.Mutex
 	runtimeDetailsExtraProvider func() string
 )
+
+// runtimeDetailsFrozen records whether the runtime-details string has been computed and
+// cached. It is set once inside cachedRuntime's once.Do and read by RuntimeDetailsFrozen.
+// It is the only cross-goroutine channel for the freeze fact and never reads the
+// mutex-unguarded runtimeDetails.value, so the probe carries no data race.
+var runtimeDetailsFrozen atomic.Bool
 
 // runtimeDetails holds the once-computed OS/arch/Go-version string. The once
 // field is a pointer so that test helpers can swap it atomically under
@@ -393,6 +456,8 @@ func cachedRuntime() string {
 	runtimeDetailsExtraMu.Unlock()
 
 	o.Do(func() {
+		runtimeDetailsFrozen.Store(true)
+
 		base := fmt.Sprintf("os=%s arch=%s go=%s",
 			runtime.GOOS, runtime.GOARCH, runtime.Version())
 
@@ -408,7 +473,7 @@ func cachedRuntime() string {
 				// the whole process; fall back to base on any panic.
 				defer func() { _ = recover() }()
 				if extra := provider(); extra != "" {
-					base = base + " " + extra
+					base = base + " " + sanitizeRuntimeExtra(extra)
 				}
 			}()
 		}

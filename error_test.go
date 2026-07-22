@@ -3,7 +3,9 @@ package loginjector
 import (
 	"errors"
 	"net/http"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -453,6 +455,7 @@ func resetRuntimeCacheForTest() {
 	runtimeDetails.once = &sync.Once{}
 	runtimeDetails.value = ""
 	runtimeDetailsExtraProvider = nil
+	runtimeDetailsFrozen.Store(false)
 	runtimeDetailsExtraMu.Unlock()
 }
 
@@ -535,6 +538,29 @@ func TestSetRuntimeDetailsProvider(t *testing.T) {
 			assert.Equal(t, results[0], results[i], "runtime string must be identical across goroutines")
 		}
 		assert.True(t, strings.HasSuffix(results[0], " cpu=concurrent"), "provider output must be present")
+	})
+
+	t.Run("multiline_provider_is_single_lined", func(t *testing.T) {
+		t.Cleanup(resetRuntimeCacheForTest)
+		// a multi-line provider result with an embedded ESC control byte must be
+		// collapsed to a single line so Runtime() keeps its single-line contract.
+		SetRuntimeDetailsProvider(func() string { return "a\nb\x1b[31mc\td" })
+		rt := NewStackTraceError().Runtime()
+
+		assert.NotContains(t, rt, "\n", "Runtime() must stay single-line")
+		assert.NotContains(t, rt, "\x1b", "ESC control byte must be stripped")
+		// CR/LF/TAB become spaces; the ESC byte is dropped, so the visible chars survive.
+		assert.True(t, strings.HasSuffix(rt, " a b[31mc d"),
+			"CR/LF/TAB collapse to spaces and other control chars drop; got: %q", rt)
+	})
+
+	t.Run("single_line_provider_is_byte_identical", func(t *testing.T) {
+		t.Cleanup(resetRuntimeCacheForTest)
+		// a control-char-free provider result must pass through unchanged.
+		SetRuntimeDetailsProvider(func() string { return "cpu=Xeon build=v1.2.3" })
+		rt := NewStackTraceError().Runtime()
+		assert.True(t, strings.HasSuffix(rt, " cpu=Xeon build=v1.2.3"),
+			"a clean single-line provider result must be appended verbatim; got: %q", rt)
 	})
 
 	t.Run("panicking_provider_falls_back_to_base", func(t *testing.T) {
@@ -624,5 +650,111 @@ func TestWrapHttpError(t *testing.T) {
 		cause := errors.New("extra detail")
 		err := WrapHttpError(http.StatusInternalServerError, cause)
 		assert.Contains(t, err.Error(), http.StatusText(http.StatusInternalServerError))
+	})
+}
+
+// TestNewTraceError pins NewTraceError's resolved frame so an internal refactor that
+// shifts the skip depth (e.g. inserting a wrapper between the constructor and LineTrace)
+// fails CI, and proves NewTraceErrorSkip is the behavior-preserving primitive it delegates
+// to. The constructors are called at the test's top level — not in a t.Run closure — so
+// the resolved method is TestNewTraceError. The expected line is captured with
+// runtime.Caller(0) one line below each constructor (a fixed 1-line offset, no rot-prone
+// literal): gofmt keeps the two statements on adjacent lines.
+func TestNewTraceError(t *testing.T) {
+	te := NewTraceError()
+	_, file, teAnchor, _ := runtime.Caller(0) // one line below the constructor above
+	teLine := teAnchor - 1
+
+	teSkip := NewTraceErrorSkip(0)
+	_, fileSkip, skipAnchor, _ := runtime.Caller(0)
+	skipLine := skipAnchor - 1
+
+	// NewTraceError() and NewTraceErrorSkip(0) each resolve their own direct caller, so on
+	// THIS shared source line both resolve the same test frame and their Line()s are equal.
+	// The equality is a same-call-site coincidence, not a claim that the two are semantically
+	// identical — NewTraceError delegates to NewTraceErrorSkip(1), not (0). Keeping them on
+	// one source line is what makes the frames match.
+	eqDirect, eqSkip := NewTraceError(), NewTraceErrorSkip(0)
+
+	t.Run("line points at the caller base file, line and method", func(t *testing.T) {
+		t.Parallel()
+		// assert only the base filename + line + method; the leading <parent>/ prefix is
+		// the checkout dir on CI and is environment-dependent, so it is not asserted.
+		assert.Contains(t, te.Line(), filepath.Base(file)+":"+strconv.Itoa(teLine))
+		assert.Contains(t, te.Line(), "TestNewTraceError")
+	})
+
+	t.Run("Skip(0) resolves its direct caller frame", func(t *testing.T) {
+		t.Parallel()
+		assert.Contains(t, teSkip.Line(), filepath.Base(fileSkip)+":"+strconv.Itoa(skipLine))
+		assert.Contains(t, teSkip.Line(), "TestNewTraceError")
+	})
+
+	t.Run("delegation is behavior-preserving", func(t *testing.T) {
+		t.Parallel()
+		assert.Equal(t, eqDirect.Line(), eqSkip.Line(),
+			"NewTraceError().Line() == NewTraceErrorSkip(0).Line() holds because both are "+
+				"called on the same source line, not because the two are semantically equal")
+	})
+}
+
+// TestStackTraceError_StackRedacted covers the redacted-stack function: it must drop the
+// absolute build-host prefix from every frame while keeping <parent>/<base>:<line> frames.
+func TestStackTraceError_StackRedacted(t *testing.T) {
+	t.Parallel()
+
+	err := NewStackTraceError()
+	full := err.Stack()
+	redacted := StackRedacted(err)
+
+	t.Run("no absolute frame prefix remains", func(t *testing.T) {
+		t.Parallel()
+		for _, ln := range strings.Split(redacted, "\n") {
+			if !strings.HasPrefix(ln, "\t") {
+				continue
+			}
+			body := strings.TrimPrefix(ln, "\t")
+			require.False(t, strings.HasPrefix(body, "/"),
+				"a redacted frame path must not be absolute, got: %q", ln)
+		}
+	})
+
+	t.Run("keeps parent/base frames and actually shortens", func(t *testing.T) {
+		t.Parallel()
+		require.Regexp(t, `error_test\.go:\d+`, redacted,
+			"the caller frame must survive as <parent>/<base>:<line>")
+		require.NotEqual(t, full, redacted,
+			"redaction must change the stack (this host uses absolute build paths)")
+	})
+}
+
+// TestRuntimeDetailsFrozen covers the freeze-state probe. It is NOT parallel at the top
+// level because it mutates process-wide runtime-details state shared with
+// TestSetRuntimeDetailsProvider; each subtest resets that state first.
+func TestRuntimeDetailsFrozen(t *testing.T) {
+	t.Run("false before first construction, true after", func(t *testing.T) {
+		resetRuntimeCacheForTest()
+		t.Cleanup(resetRuntimeCacheForTest)
+
+		require.False(t, RuntimeDetailsFrozen(),
+			"must be false before any StackTraceError is constructed")
+		_ = NewStackTraceError()
+		require.True(t, RuntimeDetailsFrozen(),
+			"must be true after the first StackTraceError freezes the string")
+	})
+
+	t.Run("concurrent constructors and probes are race-free", func(t *testing.T) {
+		resetRuntimeCacheForTest()
+		t.Cleanup(resetRuntimeCacheForTest)
+
+		var wg sync.WaitGroup
+		for i := 0; i < 50; i++ {
+			wg.Add(2)
+			go func() { defer wg.Done(); _ = NewStackTraceError() }()
+			go func() { defer wg.Done(); _ = RuntimeDetailsFrozen() }()
+		}
+		wg.Wait()
+		require.True(t, RuntimeDetailsFrozen(),
+			"the string must be frozen once the constructors have run")
 	})
 }

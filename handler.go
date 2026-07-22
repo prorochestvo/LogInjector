@@ -21,6 +21,17 @@ import (
 func TelegramHandler(botToken, chatID, fileName string, labels ...string) io.Writer {
 	const telegramAPI = "https://api.telegram.org/bot"
 	url := fmt.Sprintf("%s%s/sendDocument", telegramAPI, botToken)
+	// redactToken masks botToken in an error string before it is surfaced: a failed
+	// request build or client.Do returns a *url.Error whose text embeds the full URL,
+	// token included, which would otherwise land in logs and log files.
+	redactToken := func(s string) string {
+		// guard: an empty or very short token would over-match unrelated substrings, and
+		// no real Telegram token is that short, so skip redaction below the threshold.
+		if len(botToken) < 8 {
+			return s
+		}
+		return strings.ReplaceAll(s, botToken, "***")
+	}
 	w := &writer{
 		h: func(msg []byte) (int, error) {
 			payload := &bytes.Buffer{}
@@ -55,13 +66,13 @@ func TelegramHandler(botToken, chatID, fileName string, labels ...string) io.Wri
 
 			request, err := http.NewRequest("POST", url, payload)
 			if err != nil {
-				return 0, fmt.Errorf("could not create HTTP request: %v", err)
+				return 0, fmt.Errorf("could not create HTTP request: %v", redactToken(err.Error()))
 			}
 			request.Header.Set("Content-Type", contentType)
 
 			r, err := (&http.Client{Timeout: time.Second * 20}).Do(request)
 			if err != nil {
-				return 0, fmt.Errorf("could not send HTTP request: %v", err)
+				return 0, fmt.Errorf("could not send HTTP request: %v", redactToken(err.Error()))
 			}
 			defer CloseOrLog(r.Body)
 
@@ -155,6 +166,27 @@ func WithMaxAge(d time.Duration) RotatingFileOption {
 	return func(c *rotatingFileConfig) { c.maxAge = d }
 }
 
+// WithMaxAgeDays is WithMaxAge(time.Duration(days) * 24 * time.Hour) with an
+// unmistakable unit — it prunes rotated backups older than the given number of days.
+// See WithMaxAge for the full pruning semantics, mtime caveats, and the zero-disables
+// rule; this is purely a units-safe wrapper over it.
+func WithMaxAgeDays(days int) RotatingFileOption {
+	return WithMaxAge(time.Duration(days) * 24 * time.Hour)
+}
+
+// WithFileMode overrides the permission bits used when the handler CREATES a log
+// file — the live prefix.<8 hex>.log (or prefix.log under WithStableCurrentName) and
+// the gzip .log.gz temp under WithCompress. The default is 0640.
+//
+// It applies only to files this handler creates; the process umask still masks the
+// bits (the effective mode is only ever more restrictive than requested). It does NOT
+// re-chmod a file that already exists on disk — a live file left at 0640 by a prior
+// run keeps 0640 because it is opened O_APPEND, not created. Pass WithFreshStart if you
+// need the mode to apply to a from-scratch ring.
+func WithFileMode(mode os.FileMode) RotatingFileOption {
+	return func(c *rotatingFileConfig) { c.fileMode = mode }
+}
+
 // WithCompress gzips each rotated backup to prefix.<8 hex>.log.gz and removes the
 // plaintext, synchronously, on the Write that triggers the rotation. It is OFF by
 // default; with no options the handler never compresses and a pre-existing foreign
@@ -206,6 +238,7 @@ func RotatingFileHandler(folder, prefix string, opts ...RotatingFileOption) io.W
 	cfg := rotatingFileConfig{
 		maxFileSize: 5 << 20,
 		maxFiles:    7,
+		fileMode:    defaultFilePermissions, // zero-value os.FileMode is 0 (invalid); seed it
 	}
 	for _, o := range opts {
 		o(&cfg)
@@ -266,7 +299,7 @@ func RotatingFileHandler(folder, prefix string, opts ...RotatingFileOption) io.W
 				if e := os.Rename(src, filepath.Join(folder, backupBase)); e != nil {
 					err = errors.Join(err, e)
 				} else if cfg.compress {
-					err = errors.Join(err, compressFile(folder, backupBase))
+					err = errors.Join(err, compressFile(folder, backupBase, cfg.fileMode))
 				}
 			} else if !os.IsNotExist(e) {
 				err = errors.Join(err, e)
@@ -278,7 +311,7 @@ func RotatingFileHandler(folder, prefix string, opts ...RotatingFileOption) io.W
 			oldIndex := index
 			index++
 			if cfg.compress {
-				err = errors.Join(err, compressFile(folder, rotatingFileName(prefix, oldIndex)))
+				err = errors.Join(err, compressFile(folder, rotatingFileName(prefix, oldIndex), cfg.fileMode))
 			}
 			fileName = rotatingFileName(prefix, index)
 			// seed the new target's size from disk rather than assuming 0: when the
@@ -311,7 +344,7 @@ func RotatingFileHandler(folder, prefix string, opts ...RotatingFileOption) io.W
 			err := seedErr
 			seedErr = nil
 
-			f, openErr := os.OpenFile(filepath.Join(folder, fileName), os.O_WRONLY|os.O_CREATE|os.O_APPEND, defaultFilePermissions)
+			f, openErr := os.OpenFile(filepath.Join(folder, fileName), os.O_WRONLY|os.O_CREATE|os.O_APPEND, cfg.fileMode)
 			if openErr != nil {
 				return 0, errors.Join(err, openErr)
 			}
@@ -558,6 +591,7 @@ type rotatingFileConfig struct {
 	stableName  bool          // WithStableCurrentName: live file is the fixed prefix.log.
 	maxAge      time.Duration // WithMaxAge: prune backups older than this; <= 0 disables.
 	compress    bool          // WithCompress: gzip rotated backups to prefix.<idx>.log.gz.
+	fileMode    os.FileMode   // WithFileMode: perms for files this handler CREATES; seeded to defaultFilePermissions.
 }
 
 // rotatingFileName renders the on-disk name for a given rotation index, e.g.
@@ -866,12 +900,14 @@ func listBackups(folder, prefix string, includeGz bool, excludeBase string) (map
 }
 
 // compressFile gzips folder/base (a rotated plaintext prefix.<idx>.log) to
-// folder/base.gz and removes the plaintext, crash-safely: it writes to a 0640 O_EXCL temp
-// (never os.Create, which is world-readable, and O_EXCL also refuses a pre-planted
-// symlink), flushes and fsyncs, then renames the temp into place before removing the
-// plaintext — so a reader of *.log.gz never sees a partial file. The .gz keeps the source
-// file's mtime (os.Chtimes) so age pruning stays honest. A missing source is a no-op.
-func compressFile(folder, base string) error {
+// folder/base.gz and removes the plaintext, crash-safely: it writes to an O_EXCL temp
+// created with mode (never os.Create, which is world-readable, and O_EXCL also refuses a
+// pre-planted symlink), flushes and fsyncs, then renames the temp into place before
+// removing the plaintext — so a reader of *.log.gz never sees a partial file. mode is the
+// handler's configured file mode (default 0640, overridable via WithFileMode); the process
+// umask still masks it. The .gz keeps the source file's mtime (os.Chtimes) so age pruning
+// stays honest. A missing source is a no-op.
+func compressFile(folder, base string, mode os.FileMode) error {
 	src := filepath.Join(folder, base)
 	fi, err := os.Stat(src)
 	if err != nil {
@@ -889,7 +925,7 @@ func compressFile(folder, base string) error {
 
 	dst := src + "." + gzipExtension
 	tmp := dst + "." + tmpExtension
-	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, defaultFilePermissions)
+	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
 		return err
 	}

@@ -387,7 +387,7 @@ func TestRotatingFileHandler_Compress(t *testing.T) {
 		want, err := os.Stat(filepath.Join(dir, src))
 		require.NoError(t, err)
 
-		require.NoError(t, compressFile(dir, src))
+		require.NoError(t, compressFile(dir, src, defaultFilePermissions))
 
 		require.NoFileExists(t, filepath.Join(dir, src), "plaintext removed after compression")
 		fi, err := os.Stat(filepath.Join(dir, src+"."+gzipExtension))

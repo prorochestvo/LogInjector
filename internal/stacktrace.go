@@ -68,12 +68,7 @@ func LineTrace(skip int) string {
 	// shorten the absolute file path to "<parent>/<base>" so the output matches
 	// the old debug.Stack parser: stdlib frames become "testing/testing.go",
 	// module-root files get their immediate parent directory prefix.
-	base := path.Base(file)
-	parent := path.Base(path.Dir(file))
-	shortFile := base
-	if parent != "" && parent != "." && parent != "/" {
-		shortFile = parent + "/" + base
-	}
+	shortFile := shortenFramePath(file)
 
 	method := "unknown"
 	if fn := runtime.FuncForPC(pc); fn != nil {
@@ -95,4 +90,43 @@ func LineTrace(skip int) string {
 	}
 
 	return shortFile + ":" + strconv.Itoa(line) + " (" + method + ")"
+}
+
+// shortenFramePath reduces an absolute source path to "<parent>/<base>" — e.g.
+// "/home/ci/proj/main.go" becomes "proj/main.go" and a stdlib frame becomes
+// "testing/testing.go". It is the single shortening rule shared by LineTrace and
+// RedactStackPaths so the two paths cannot drift.
+func shortenFramePath(file string) string {
+	base := path.Base(file)
+	parent := path.Base(path.Dir(file))
+	if parent != "" && parent != "." && parent != "/" {
+		return parent + "/" + base
+	}
+	return base
+}
+
+// RedactStackPaths rewrites each tab-indented frame line of a StackTrace() dump
+// ("\t<abs-path>:<line> +0x..") so <abs-path> is shortened via shortenFramePath,
+// stripping build-host absolute path prefixes. The goroutine header, func(...) lines,
+// argument words, line numbers, and frame ordering are all preserved untouched; only
+// the leading directory prefix of each tab-indented frame path is dropped.
+func RedactStackPaths(stack string) string {
+	lines := strings.Split(stack, "\n")
+	for i, ln := range lines {
+		if !strings.HasPrefix(ln, "\t") {
+			continue // only frame path lines are tab-indented
+		}
+		body := ln[1:]
+		suffix := ""
+		// the optional offset is the trailing token starting with '+'; split from the
+		// RIGHT so a build path containing a space is not truncated mid-path (which would
+		// strip the ":line" and leave the full absolute path unrewritten — a path leak).
+		if sp := strings.LastIndexByte(body, ' '); sp >= 0 && sp+1 < len(body) && body[sp+1] == '+' {
+			body, suffix = body[:sp], body[sp:]
+		}
+		if colon := strings.LastIndexByte(body, ':'); colon >= 0 { // "<path>:<line>"
+			lines[i] = "\t" + shortenFramePath(body[:colon]) + body[colon:] + suffix
+		}
+	}
+	return strings.Join(lines, "\n")
 }

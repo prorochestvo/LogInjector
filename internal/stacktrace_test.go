@@ -90,3 +90,62 @@ func TestLineTrace(t *testing.T) {
 		require.NotContains(t, result, "]")
 	})
 }
+
+func TestRedactStackPaths(t *testing.T) {
+	t.Parallel()
+
+	t.Run("shortens frame paths and drops the absolute prefix", func(t *testing.T) {
+		t.Parallel()
+
+		// a real dump: a goroutine header, func(...) lines (not tab-indented), and
+		// tab-indented frame path lines with absolute build-host paths and +0x offsets.
+		stack := StackTrace()
+		redacted := RedactStackPaths(stack)
+
+		// the goroutine header must survive untouched.
+		require.True(t, strings.HasPrefix(redacted, "goroutine "),
+			"the goroutine header must be preserved")
+
+		// no tab-indented frame line may retain a leading absolute path segment.
+		for _, ln := range strings.Split(redacted, "\n") {
+			if !strings.HasPrefix(ln, "\t") {
+				continue
+			}
+			body := strings.TrimPrefix(ln, "\t")
+			require.False(t, strings.HasPrefix(body, "/"),
+				"no frame path may keep an absolute prefix, got: %q", ln)
+		}
+
+		// the caller frame still resolves to <parent>/<base>:<line> with its +0x offset.
+		require.Regexp(t, `internal/stacktrace_test\.go:\d+ \+0x`, redacted,
+			"the redacted stack must keep <parent>/<base>:<line> +0x.. frames")
+	})
+
+	t.Run("leaves non-frame lines untouched", func(t *testing.T) {
+		t.Parallel()
+
+		// only tab-indented lines are frame paths; the header and func lines must pass through.
+		in := "goroutine 1 [running]:\nmain.f(0x1)\n\t/home/ci/proj/main.go:10 +0x2a"
+		out := RedactStackPaths(in)
+		lines := strings.Split(out, "\n")
+		require.Equal(t, "goroutine 1 [running]:", lines[0])
+		require.Equal(t, "main.f(0x1)", lines[1])
+		require.Equal(t, "\tproj/main.go:10 +0x2a", lines[2],
+			"the absolute frame path must collapse to <parent>/<base>")
+	})
+
+	t.Run("shortens a build path containing a space without leaking it", func(t *testing.T) {
+		t.Parallel()
+
+		// a build path with a space in it (e.g. a macOS home dir "John Smith"): splitting
+		// on the FIRST space would truncate mid-path and leak the full absolute prefix.
+		in := "\t/Users/John Smith/go/proj/main.go:10 +0x1a"
+		out := RedactStackPaths(in)
+		require.Contains(t, out, "proj/main.go:10",
+			"the frame must collapse to <parent>/<base>:<line>")
+		require.NotContains(t, out, "/Users/John Smith",
+			"the absolute build-host prefix must not leak")
+		require.Equal(t, "\tproj/main.go:10 +0x1a", out,
+			"the +0x offset must be preserved and split from the right")
+	})
+}

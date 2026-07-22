@@ -6,6 +6,51 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-07-22
+
+### Security
+
+- `TelegramHandler` no longer leaks the bot token into surfaced error strings. When the
+  request build or `client.Do` failed, the returned `*url.Error` embedded the full
+  `.../bot<TOKEN>/sendDocument` URL — token included — which then landed in logs and log
+  files. Both URL-bearing return sites now redact the token to `***` (the literal `bot`
+  prefix is kept). A `len(botToken) < 8` guard skips redaction for tokens too short to be a
+  valid Telegram token, so unrelated substrings are never over-matched.
+
+### Added
+
+- `WithFileMode(os.FileMode)` for `RotatingFileHandler` overrides the permission bits used
+  when the handler CREATES a log file — the live `prefix.<8 hex>.log` (or `prefix.log` under
+  `WithStableCurrentName`) and the gzip `.log.gz` temp under `WithCompress`. The default
+  stays `0640` and is byte-identical when the option is unused. It applies only to files the
+  handler creates (the process umask still masks the bits) and never re-`chmod`s a
+  pre-existing `O_APPEND`-opened live file. `FileByFormatHandler` is intentionally left on
+  the hardcoded `0640`.
+- `WithMaxAgeDays(int)` is a units-safe wrapper over `WithMaxAge` that prunes rotated backups
+  older than the given number of days, sidestepping the `WithMaxAge(14)`-is-14-nanoseconds
+  footgun.
+- `StackRedacted(e StackTraceError) string` — a package-level function returning `e.Stack()`
+  with each frame's absolute build-host path shortened to `<parent>/<base>` — the identical
+  reduction `LineTrace` applies — so the trace can be surfaced where `Stack()` (which carries
+  absolute paths) cannot. Line numbers, the goroutine header, and frame ordering are
+  preserved. It is a function, not a method on the `StackTraceError` interface, so the
+  exported interface stays sealed and external implementers are not broken.
+- `RuntimeDetailsFrozen() bool` is an advisory probe reporting whether the process-wide
+  runtime-details string has already been computed and cached; once true, a later
+  `SetRuntimeDetailsProvider` call is a no-op. It is a diagnostic (freeze-state only), not a
+  synchronization primitive.
+- `NewTraceErrorSkip(skip int)` exposes the frame-skip primitive that `NewTraceError` now
+  delegates to (`NewTraceError` calls `NewTraceErrorSkip(1)` to absorb the extra delegation
+  hop), for wrapping the constructor in a helper while still resolving the caller's frame.
+
+### Changed
+
+- The `SetRuntimeDetailsProvider` result is now sanitized to keep `Runtime()` single-line:
+  CR/LF/TAB are collapsed to spaces and other control characters are stripped, so a
+  multi-line provider block can no longer break the single-line log contract other sinks
+  assume. Printable Unicode is preserved and a clean single-line result is byte-identical to
+  before.
+
 ## [1.0.8] - 2026-07-20
 
 ### Added
